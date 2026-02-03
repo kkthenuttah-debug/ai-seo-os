@@ -355,3 +355,6 @@ export interface OptimizeJob {
 }
 
 export type QueueJob = BuildJob | PublishJob | MonitorJob | OptimizeJob;
+
+// Database Types - Supabase schema types
+export * from './database';
