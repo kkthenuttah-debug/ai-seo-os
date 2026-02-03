@@ -1,14 +1,15 @@
 import { createClient } from '@supabase/supabase-js';
 import { env } from './config.js';
+import type { Database } from '../types/database.js';
 
 // Public client for user operations
-export const supabase = createClient(
+export const supabase = createClient<Database>(
   env.SUPABASE_URL,
   env.SUPABASE_ANON_KEY
 );
 
 // Admin client for server-side operations
-export const supabaseAdmin = createClient(
+export const supabaseAdmin = createClient<Database>(
   env.SUPABASE_URL,
   env.SUPABASE_SERVICE_KEY || env.SUPABASE_ANON_KEY,
   {
@@ -102,7 +103,7 @@ export async function getGSCSnapshotsByProjectId(projectId: string, limit = 30) 
     .from('gsc_snapshots')
     .select('*')
     .eq('project_id', projectId)
-    .order('date', { ascending: false })
+    .order('snapshot_date', { ascending: false })
     .limit(limit);
 
   if (error) throw error;
@@ -114,7 +115,7 @@ export async function getRankingsByProjectId(projectId: string) {
     .from('rankings')
     .select('*')
     .eq('project_id', projectId)
-    .order('date', { ascending: false });
+    .order('tracked_at', { ascending: false });
 
   if (error) throw error;
   return data;
