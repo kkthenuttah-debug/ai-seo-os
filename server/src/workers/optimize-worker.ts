@@ -1,5 +1,5 @@
 import { Worker, Job } from 'bullmq';
-import { redis } from '../lib/redis.js';
+import { getWorkerOptions } from '../queues/config.js';
 import { logger } from '../lib/logger.js';
 import { createOrchestrator } from '../services/orchestrator.js';
 import { supabaseAdmin } from '../lib/supabase.js';
@@ -52,14 +52,7 @@ async function processOptimizeJob(job: Job<OptimizeJob>) {
 }
 
 export function startOptimizeWorker() {
-  const worker = new Worker<OptimizeJob>('optimize', processOptimizeJob, {
-    connection: redis,
-    concurrency: 2,
-    limiter: {
-      max: 10,
-      duration: 60000,
-    },
-  });
+  const worker = new Worker<OptimizeJob>('optimize', processOptimizeJob, getWorkerOptions('optimize'));
 
   worker.on('completed', (job) => {
     log.info({ jobId: job.id }, 'Optimize worker: job completed');

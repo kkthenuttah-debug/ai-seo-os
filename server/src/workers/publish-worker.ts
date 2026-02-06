@@ -1,5 +1,5 @@
 import { Worker, Job } from 'bullmq';
-import { redis } from '../lib/redis.js';
+import { getWorkerOptions } from '../queues/config.js';
 import { logger } from '../lib/logger.js';
 import { createOrchestrator } from '../services/orchestrator.js';
 import { supabaseAdmin } from '../lib/supabase.js';
@@ -41,14 +41,7 @@ async function processPublishJob(job: Job<PublishJob>) {
 }
 
 export function startPublishWorker() {
-  const worker = new Worker<PublishJob>('publish', processPublishJob, {
-    connection: redis,
-    concurrency: 1, // Publish one at a time to avoid rate limits
-    limiter: {
-      max: 5,
-      duration: 60000, // 5 publishes per minute
-    },
-  });
+  const worker = new Worker<PublishJob>('publish', processPublishJob, getWorkerOptions('publish'));
 
   worker.on('completed', (job) => {
     log.info({ jobId: job.id }, 'Publish worker: job completed');

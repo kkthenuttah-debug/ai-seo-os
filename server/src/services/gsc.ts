@@ -4,7 +4,7 @@ import { env } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
 import { supabaseAdmin } from '../lib/supabase.js';
 import { encryptValue } from '../utils/crypto.js';
-import { scheduleMonitorJob } from '../queue/index.js';
+import { scheduleMonitorJob } from '../queues/index.js';
 import { IntegrationRecoveryService } from './integrationRecovery.js';
 import type {
   SearchAnalyticsOptions,

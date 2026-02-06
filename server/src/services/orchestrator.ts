@@ -18,7 +18,7 @@ import {
   schedulePublishJob,
   scheduleOptimizeJob,
   scheduleMonitorJob,
-} from '../queue/index.js';
+} from '../queues/index.js';
 import { decryptValue } from '../utils/crypto.js';
 import type { Project, Page, MarketResearchOutput, SiteArchitectOutput } from '../types/index.js';
 import type { Integration as DatabaseIntegration } from '../types/database.js';
