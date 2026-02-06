@@ -320,6 +320,28 @@ export type LeadInsert = Omit<Lead, 'id' | 'created_at'> & {
 export type LeadUpdate = Partial<Omit<Lead, 'id' | 'created_at'>>;
 
 /**
+ * Table: webhooks
+ * Description: Webhook configurations for external integrations
+ */
+export interface Webhook {
+  id: string;
+  project_id: string;
+  url: string;
+  events: string[];
+  secret: string;
+  active: boolean;
+  last_triggered_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type WebhookInsert = Omit<Webhook, 'id' | 'created_at' | 'updated_at'> & {
+  id?: string;
+};
+
+export type WebhookUpdate = Partial<Omit<Webhook, 'id' | 'created_at' | 'updated_at'>>;
+
+/**
  * Table: logs
  * Description: System and application logs
  */
@@ -446,6 +468,11 @@ export type Database = {
         Row: Lead;
         Insert: LeadInsert;
         Update: LeadUpdate;
+      };
+      webhooks: {
+        Row: Webhook;
+        Insert: WebhookInsert;
+        Update: WebhookUpdate;
       };
       logs: {
         Row: Log;

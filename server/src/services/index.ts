@@ -4,3 +4,6 @@ export * from './webhooks.js';
 export * from './integrationRecovery.js';
 export * from './jobOrchestrator.js';
 export * from './queueManager.js';
+export * from './monitoring.js';
+export * from './errorTracking.js';
+export * from './metricsCollector.js';
