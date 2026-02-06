@@ -19,14 +19,16 @@ import {
   scheduleOptimizeJob,
   scheduleMonitorJob,
 } from '../queue/index.js';
-import type { Project, Page, Integration, MarketResearchOutput, SiteArchitectOutput } from '../types/index.js';
+import { decryptValue } from '../utils/crypto.js';
+import type { Project, Page, MarketResearchOutput, SiteArchitectOutput } from '../types/index.js';
+import type { Integration as DatabaseIntegration } from '../types/database.js';
 
 const log = logger.child({ service: 'orchestrator' });
 
 export class AgentOrchestrator {
   private projectId: string;
   private project: Project | null = null;
-  private integrations: Integration[] = [];
+  private integrations: DatabaseIntegration[] = [];
 
   constructor(projectId: string) {
     this.projectId = projectId;
@@ -185,7 +187,7 @@ export class AgentOrchestrator {
     if (!this.project) throw new Error('Orchestrator not initialized');
 
     const wpIntegration = this.integrations.find(i => i.type === 'wordpress');
-    if (!wpIntegration || !wpIntegration.credentials.wordpress) {
+    if (!wpIntegration?.access_token_encrypted || !wpIntegration.data?.site_url || !wpIntegration.data?.username) {
       throw new Error('WordPress not connected');
     }
 
@@ -215,17 +217,25 @@ export class AgentOrchestrator {
     }
 
     // Publish to WordPress
-    const wp = createWordPressService(wpIntegration.credentials.wordpress);
+    const wp = createWordPressService({
+      site_url: wpIntegration.data.site_url as string,
+      username: wpIntegration.data.username as string,
+      application_password: decryptValue(wpIntegration.access_token_encrypted),
+    });
 
     const wpPage = await wp.withRetry(() =>
-      wp.createPage({
+      wp.createPost({
         title: page.title,
         slug: page.slug,
-        content: page.content,
-        status: 'publish',
-        meta_title: publisherResult.final_meta_title,
-        meta_description: publisherResult.final_meta_description,
-        elementor_data: page.elementor_data,
+        content: page.content ?? '',
+        status: 'published',
+        meta: {
+          metaTitle: publisherResult.final_meta_title ?? page.meta_title ?? page.title,
+          metaDescription: publisherResult.final_meta_description ?? page.meta_description ?? '',
+          metaKeywords: page.meta_keywords ?? '',
+          focusKeyword: page.title,
+        },
+        elementorData: page.elementor_data,
       })
     );
 
@@ -242,11 +252,21 @@ export class AgentOrchestrator {
     log.info({ projectId: this.projectId, pageId, wpId: wpPage.id }, 'Page published successfully');
 
     // Try to submit for indexing
-    const gscIntegration = this.integrations.find(i => i.type === 'google_search_console');
-    if (gscIntegration?.credentials.gsc) {
+    const gscIntegration = this.integrations.find(i => i.type === 'gsc');
+    if (gscIntegration?.access_token_encrypted && gscIntegration.refresh_token_encrypted && gscIntegration.data?.site_url) {
       try {
-        const gsc = createGSCService(gscIntegration.credentials.gsc, gscIntegration.id);
-        await gsc.submitUrlForIndexing(wpPage.link);
+        const gsc = createGSCService(
+          {
+            access_token: decryptValue(gscIntegration.access_token_encrypted),
+            refresh_token: decryptValue(gscIntegration.refresh_token_encrypted),
+            token_expiry: gscIntegration.expires_at ?? new Date().toISOString(),
+            site_url: gscIntegration.data.site_url as string,
+          },
+          gscIntegration.id
+        );
+        if (wpPage.link) {
+          await gsc.submitUrlForIndexing(wpPage.link as string);
+        }
       } catch (error) {
         log.warn({ error }, 'Failed to submit URL for indexing');
       }
@@ -259,42 +279,34 @@ export class AgentOrchestrator {
   async runMonitoring() {
     if (!this.project) throw new Error('Orchestrator not initialized');
 
-    const gscIntegration = this.integrations.find(i => i.type === 'google_search_console');
-    if (!gscIntegration?.credentials.gsc) {
+    const gscIntegration = this.integrations.find(i => i.type === 'gsc');
+    if (!gscIntegration?.access_token_encrypted || !gscIntegration.refresh_token_encrypted || !gscIntegration.data?.site_url) {
       log.warn({ projectId: this.projectId }, 'GSC not connected, skipping monitoring');
       return null;
     }
 
     log.info({ projectId: this.projectId }, 'Running monitoring phase');
 
-    const gsc = createGSCService(gscIntegration.credentials.gsc, gscIntegration.id);
-
-    // Get last 28 days of data
-    const endDate = new Date().toISOString().split('T')[0];
-    const startDate = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
-    const performanceData = await gsc.getPerformanceData(startDate, endDate);
-
-    // Store snapshot
-    await supabaseAdmin.from('gsc_snapshots').insert({
-      project_id: this.projectId,
-      date: endDate,
-      total_clicks: performanceData.totalClicks,
-      total_impressions: performanceData.totalImpressions,
-      average_ctr: performanceData.averageCtr,
-      average_position: performanceData.averagePosition,
-      data: {
-        queries: performanceData.queries,
-        pages: performanceData.pages,
+    const gsc = createGSCService(
+      {
+        access_token: decryptValue(gscIntegration.access_token_encrypted),
+        refresh_token: decryptValue(gscIntegration.refresh_token_encrypted),
+        token_expiry: gscIntegration.expires_at ?? new Date().toISOString(),
+        site_url: gscIntegration.data.site_url as string,
       },
-    });
+      gscIntegration.id
+    );
+
+    await gsc.fetchAndStoreSnapshots(this.projectId);
 
     // Get existing snapshots for trend analysis
     const { data: snapshots } = await supabaseAdmin
       .from('gsc_snapshots')
       .select('*')
       .eq('project_id', this.projectId)
-      .order('date', { ascending: false })
+      .is('query', null)
+      .is('page', null)
+      .order('snapshot_date', { ascending: false })
       .limit(14);
 
     const pages = await getPagesByProjectId(this.projectId);
@@ -311,7 +323,7 @@ export class AgentOrchestrator {
     const result = await monitorAgent.run(this.projectId, {
       project_id: this.projectId,
       gsc_snapshots: (snapshots || []).map(s => ({
-        date: s.date,
+        date: s.snapshot_date,
         total_clicks: s.total_clicks,
         total_impressions: s.total_impressions,
         average_ctr: s.average_ctr,
@@ -352,8 +364,8 @@ export class AgentOrchestrator {
   async optimizePage(pageId: string) {
     if (!this.project) throw new Error('Orchestrator not initialized');
 
-    const gscIntegration = this.integrations.find(i => i.type === 'google_search_console');
-    if (!gscIntegration?.credentials.gsc) {
+    const gscIntegration = this.integrations.find(i => i.type === 'gsc');
+    if (!gscIntegration?.access_token_encrypted || !gscIntegration.refresh_token_encrypted || !gscIntegration.data?.site_url) {
       throw new Error('GSC not connected');
     }
 
@@ -367,7 +379,15 @@ export class AgentOrchestrator {
 
     log.info({ projectId: this.projectId, pageId, slug: page.slug }, 'Optimizing page');
 
-    const gsc = createGSCService(gscIntegration.credentials.gsc, gscIntegration.id);
+    const gsc = createGSCService(
+      {
+        access_token: decryptValue(gscIntegration.access_token_encrypted),
+        refresh_token: decryptValue(gscIntegration.refresh_token_encrypted),
+        token_expiry: gscIntegration.expires_at ?? new Date().toISOString(),
+        site_url: gscIntegration.data.site_url as string,
+      },
+      gscIntegration.id
+    );
 
     // Get page-specific GSC data
     const endDate = new Date().toISOString().split('T')[0];

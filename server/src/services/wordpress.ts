@@ -1,4 +1,14 @@
 import { logger } from '../lib/logger.js';
+import { AuthError, ValidationError } from '../utils/errors.js';
+import type {
+  CreatePostInput,
+  CreatePostResponse,
+  UpdatePostInput,
+  UpdatePostResponse,
+  MetaFields,
+  WordPressPost,
+  WordPressPage,
+} from '../types/wordpress.js';
 
 interface WordPressCredentials {
   site_url: string;
@@ -6,29 +16,20 @@ interface WordPressCredentials {
   application_password: string;
 }
 
-interface CreatePageRequest {
-  title: string;
-  slug: string;
-  content: string;
-  status: 'draft' | 'publish' | 'pending';
-  meta_title?: string;
-  meta_description?: string;
-  elementor_data?: object;
-}
+const DEFAULT_ELEMENTOR_VERSION = '3.18.0';
 
-interface WordPressPage {
-  id: number;
-  slug: string;
-  link: string;
-  status: string;
-  title: { rendered: string };
-  content: { rendered: string };
+class RetryableError extends Error {
+  constructor(message: string) {
+    super(message);
+    Object.setPrototypeOf(this, RetryableError.prototype);
+  }
 }
 
 export class WordPressService {
   private credentials: WordPressCredentials;
   private baseUrl: string;
   private authHeader: string;
+  private connectionValidated = false;
   private log = logger.child({ service: 'wordpress' });
 
   constructor(credentials: WordPressCredentials) {
@@ -37,28 +38,111 @@ export class WordPressService {
     this.authHeader = `Basic ${Buffer.from(`${credentials.username}:${credentials.application_password}`).toString('base64')}`;
   }
 
-  private async request<T>(
-    endpoint: string,
-    options: RequestInit = {}
-  ): Promise<T> {
-    const url = `${this.baseUrl}/wp-json/wp/v2${endpoint}`;
+  private async ensureConnection(): Promise<void> {
+    if (this.connectionValidated) return;
 
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        'Authorization': this.authHeader,
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      this.log.error({ url, status: response.status, error }, 'WordPress API error');
-      throw new Error(`WordPress API error: ${response.status} - ${error}`);
+    const ok = await this.testConnection();
+    if (!ok) {
+      throw new AuthError('WordPress connection failed');
     }
+    this.connectionValidated = true;
+  }
 
-    return response.json() as Promise<T>;
+  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+    return this.withRetry(async () => {
+      const url = `${this.baseUrl}/wp-json/wp/v2${endpoint}`;
+
+      let response: Awaited<ReturnType<typeof fetch>>;
+      try {
+        response = await fetch(url, {
+          ...options,
+          headers: {
+            Authorization: this.authHeader,
+            'Content-Type': 'application/json',
+            ...options.headers,
+          },
+        });
+      } catch (error) {
+        throw new RetryableError('Network error while contacting WordPress');
+      }
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        this.log.error({ url, status: response.status, error: errorText }, 'WordPress API error');
+
+        if (response.status === 401 || response.status === 403) {
+          this.connectionValidated = false;
+          throw new AuthError('WordPress authentication failed');
+        }
+
+        if (response.status === 429 || response.status >= 500) {
+          throw new RetryableError(`WordPress API error: ${response.status}`);
+        }
+
+        throw new Error(`WordPress API error: ${response.status} - ${errorText}`);
+      }
+
+      if (response.status === 204) {
+        return undefined as T;
+      }
+
+      const text = await response.text();
+      if (!text) {
+        return undefined as T;
+      }
+
+      try {
+        return JSON.parse(text) as T;
+      } catch (error) {
+        this.log.warn({ url }, 'Failed to parse WordPress response as JSON');
+        return text as T;
+      }
+    });
+  }
+
+  private mapStatus(status: 'draft' | 'published') {
+    return status === 'published' ? 'publish' : 'draft';
+  }
+
+  private buildMeta(meta?: MetaFields) {
+    if (!meta) return undefined;
+
+    const payload = {
+      rank_math_title: meta.metaTitle,
+      rank_math_description: meta.metaDescription,
+      rank_math_focus_keyword: meta.focusKeyword,
+      _yoast_wpseo_title: meta.metaTitle,
+      _yoast_wpseo_metadesc: meta.metaDescription,
+      _yoast_wpseo_focuskw: meta.focusKeyword,
+      meta_keywords: meta.metaKeywords,
+    };
+
+    const filtered = Object.fromEntries(
+      Object.entries(payload).filter(([, value]) => value !== undefined)
+    );
+
+    return Object.keys(filtered).length > 0 ? filtered : undefined;
+  }
+
+  private safeStringify(data: unknown) {
+    try {
+      return JSON.stringify(data);
+    } catch (error) {
+      throw new ValidationError('Elementor data contains invalid JSON');
+    }
+  }
+
+  private validateElementorData(data: unknown) {
+    if (!data || typeof data !== 'object') {
+      throw new ValidationError('Elementor data must be an object');
+    }
+  }
+
+  private extractContent(post: WordPressPost) {
+    if (typeof post.content === 'string') {
+      return post.content;
+    }
+    return post.content?.rendered ?? '';
   }
 
   async testConnection(): Promise<boolean> {
@@ -72,165 +156,180 @@ export class WordPressService {
     }
   }
 
-  async getPages(params?: { per_page?: number; page?: number; status?: string }): Promise<WordPressPage[]> {
-    const query = new URLSearchParams();
-    if (params?.per_page) query.set('per_page', String(params.per_page));
-    if (params?.page) query.set('page', String(params.page));
-    if (params?.status) query.set('status', params.status);
-
-    const endpoint = `/pages?${query.toString()}`;
-    return this.request<WordPressPage[]>(endpoint);
-  }
-
-  async getPageBySlug(slug: string): Promise<WordPressPage | null> {
-    const pages = await this.request<WordPressPage[]>(`/pages?slug=${slug}`);
-    return pages.length > 0 ? pages[0] : null;
-  }
-
-  async createPage(page: CreatePageRequest): Promise<WordPressPage> {
-    this.log.info({ slug: page.slug }, 'Creating WordPress page');
+  async createPost(data: CreatePostInput): Promise<CreatePostResponse> {
+    await this.ensureConnection();
+    this.log.info({ slug: data.slug }, 'Creating WordPress post');
 
     const body: Record<string, unknown> = {
-      title: page.title,
-      slug: page.slug,
-      content: page.content,
-      status: page.status,
+      title: data.title,
+      slug: data.slug,
+      content: data.content,
+      status: this.mapStatus(data.status),
     };
 
-    // Add SEO meta if using RankMath or Yoast
-    if (page.meta_title || page.meta_description) {
-      body.meta = {
-        // RankMath meta fields
-        rank_math_title: page.meta_title,
-        rank_math_description: page.meta_description,
-        // Yoast meta fields (fallback)
-        _yoast_wpseo_title: page.meta_title,
-        _yoast_wpseo_metadesc: page.meta_description,
-      };
+    const meta = this.buildMeta(data.meta);
+    if (meta) {
+      body.meta = meta;
     }
 
-    const createdPage = await this.request<WordPressPage>('/pages', {
+    const createdPost = await this.request<WordPressPost>('/pages', {
       method: 'POST',
       body: JSON.stringify(body),
     });
 
-    // Update Elementor data if provided
-    if (page.elementor_data) {
-      await this.updateElementorData(createdPage.id, page.elementor_data);
+    if (data.elementorData) {
+      await this.setElementorData(createdPost.id, data.elementorData);
     }
 
-    this.log.info({ id: createdPage.id, slug: createdPage.slug }, 'WordPress page created');
-    return createdPage;
+    this.log.info({ id: createdPost.id, slug: createdPost.slug }, 'WordPress post created');
+    return createdPost;
   }
 
-  async updatePage(pageId: number, updates: Partial<CreatePageRequest>): Promise<WordPressPage> {
-    this.log.info({ pageId }, 'Updating WordPress page');
+  async updatePost(postId: number, data: UpdatePostInput): Promise<UpdatePostResponse> {
+    await this.ensureConnection();
+    this.log.info({ postId }, 'Updating WordPress post');
 
     const body: Record<string, unknown> = {};
 
-    if (updates.title) body.title = updates.title;
-    if (updates.slug) body.slug = updates.slug;
-    if (updates.content) body.content = updates.content;
-    if (updates.status) body.status = updates.status;
+    if (data.title !== undefined) body.title = data.title;
+    if (data.slug !== undefined) body.slug = data.slug;
+    if (data.content !== undefined) body.content = data.content;
+    if (data.status !== undefined) body.status = this.mapStatus(data.status);
 
-    if (updates.meta_title || updates.meta_description) {
-      body.meta = {
-        rank_math_title: updates.meta_title,
-        rank_math_description: updates.meta_description,
-        _yoast_wpseo_title: updates.meta_title,
-        _yoast_wpseo_metadesc: updates.meta_description,
-      };
+    const meta = this.buildMeta(data.meta);
+    if (meta) {
+      body.meta = meta;
     }
 
-    const updatedPage = await this.request<WordPressPage>(`/pages/${pageId}`, {
+    const updatedPost = await this.request<WordPressPost>(`/pages/${postId}`, {
       method: 'POST',
       body: JSON.stringify(body),
     });
 
-    if (updates.elementor_data) {
-      await this.updateElementorData(pageId, updates.elementor_data);
+    if (data.elementorData) {
+      await this.setElementorData(postId, data.elementorData);
     }
 
-    return updatedPage;
+    return updatedPost;
   }
 
-  async deletePage(pageId: number): Promise<void> {
-    await this.request(`/pages/${pageId}?force=true`, {
-      method: 'DELETE',
-    });
-    this.log.info({ pageId }, 'WordPress page deleted');
+  async getPost(postId: number): Promise<WordPressPost> {
+    await this.ensureConnection();
+    return this.request<WordPressPost>(`/pages/${postId}?context=edit`);
   }
 
-  async updateElementorData(pageId: number, elementorData: object): Promise<void> {
-    // Elementor stores data in post meta
-    const metaUrl = `${this.baseUrl}/wp-json/wp/v2/pages/${pageId}`;
+  async setElementorData(postId: number, elementorData: unknown): Promise<void> {
+    await this.ensureConnection();
+    this.validateElementorData(elementorData);
 
-    await fetch(metaUrl, {
+    const version = (elementorData as { version?: string })?.version || DEFAULT_ELEMENTOR_VERSION;
+    if (version !== DEFAULT_ELEMENTOR_VERSION) {
+      this.log.warn({ postId, version }, 'Elementor data version mismatch');
+    }
+
+    await this.request(`/pages/${postId}`, {
       method: 'POST',
-      headers: {
-        'Authorization': this.authHeader,
-        'Content-Type': 'application/json',
-      },
       body: JSON.stringify({
         meta: {
-          _elementor_data: JSON.stringify(elementorData),
+          _elementor_data: this.safeStringify(elementorData),
           _elementor_edit_mode: 'builder',
           _elementor_template_type: 'wp-page',
-          _elementor_version: '3.18.0',
+          _elementor_version: version,
         },
       }),
     });
 
-    this.log.debug({ pageId }, 'Elementor data updated');
+    this.log.debug({ postId }, 'Elementor data updated');
   }
 
-  async publishPage(pageId: number): Promise<WordPressPage> {
-    return this.updatePage(pageId, { status: 'publish' });
-  }
+  async getElementorData(postId: number): Promise<unknown> {
+    await this.ensureConnection();
+    const post = await this.getPost(postId);
+    const raw = post.meta?._elementor_data;
 
-  async getMediaLibrary(params?: { per_page?: number }): Promise<unknown[]> {
-    const query = new URLSearchParams();
-    if (params?.per_page) query.set('per_page', String(params.per_page));
-
-    return this.request<unknown[]>(`/media?${query.toString()}`);
-  }
-
-  async uploadMedia(file: Buffer, filename: string, mimeType: string): Promise<{ id: number; url: string }> {
-    const url = `${this.baseUrl}/wp-json/wp/v2/media`;
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': this.authHeader,
-        'Content-Disposition': `attachment; filename="${filename}"`,
-        'Content-Type': mimeType,
-      },
-      body: file,
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to upload media: ${response.status}`);
+    if (!raw || typeof raw !== 'string') {
+      return null;
     }
 
-    const data = await response.json() as { id: number; source_url: string };
-    return { id: data.id, url: data.source_url };
+    try {
+      return JSON.parse(raw);
+    } catch (error) {
+      this.log.warn({ postId }, 'Failed to parse Elementor data');
+      return null;
+    }
   }
 
-  // Retry wrapper for resilient operations
-  async withRetry<T>(
-    operation: () => Promise<T>,
-    maxRetries = 3,
-    baseDelay = 1000
-  ): Promise<T> {
+  async setMetaFields(postId: number, meta: MetaFields): Promise<void> {
+    await this.ensureConnection();
+    const metaPayload = this.buildMeta(meta);
+
+    if (!metaPayload) {
+      return;
+    }
+
+    await this.request(`/pages/${postId}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        meta: metaPayload,
+      }),
+    });
+  }
+
+  async getMetaFields(postId: number): Promise<MetaFields> {
+    await this.ensureConnection();
+    const post = await this.getPost(postId);
+    const meta = post.meta ?? {};
+
+    return {
+      metaTitle: meta.rank_math_title as string | undefined,
+      metaDescription: (meta.rank_math_description || meta._yoast_wpseo_metadesc || '') as string,
+      metaKeywords: (meta.meta_keywords as string) || '',
+      focusKeyword: (meta.rank_math_focus_keyword || meta._yoast_wpseo_focuskw) as string | undefined,
+    };
+  }
+
+  async publishPost(postId: number): Promise<void> {
+    await this.updatePostStatus(postId, 'published');
+  }
+
+  async updatePostStatus(postId: number, status: 'draft' | 'published'): Promise<void> {
+    await this.updatePost(postId, { status });
+  }
+
+  async searchPages(query: string): Promise<WordPressPage[]> {
+    await this.ensureConnection();
+    const search = new URLSearchParams({ search: query }).toString();
+    return this.request<WordPressPage[]>(`/pages?${search}`);
+  }
+
+  async insertInternalLink(postId: number, anchor: string, targetUrl: string, position: number): Promise<void> {
+    await this.ensureConnection();
+    const post = await this.getPost(postId);
+    const content = this.extractContent(post);
+
+    const safePosition = Math.min(Math.max(position, 0), content.length);
+    const anchorTag = `<a href="${targetUrl}">${anchor}</a>`;
+    const updatedContent = `${content.slice(0, safePosition)}${anchorTag}${content.slice(safePosition)}`;
+
+    await this.updatePost(postId, { content: updatedContent });
+  }
+
+  async withRetry<T>(operation: () => Promise<T>, maxRetries = 3, baseDelay = 1000): Promise<T> {
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
         return await operation();
       } catch (error) {
-        lastError = error as Error;
+        const err = error as Error;
+        lastError = err;
+
+        if (!(err instanceof RetryableError)) {
+          throw err;
+        }
+
         const delay = baseDelay * Math.pow(2, attempt);
-        this.log.warn({ attempt, delay, error: lastError.message }, 'Retrying WordPress operation');
+        this.log.warn({ attempt, delay, error: err.message }, 'Retrying WordPress operation');
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
