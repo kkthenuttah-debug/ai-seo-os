@@ -30,6 +30,10 @@ export const env = {
   // App
   FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:5173',
   API_URL: process.env.API_URL || 'http://localhost:3001',
+
+  // Webhooks
+  WEBHOOK_SECRET: process.env.WEBHOOK_SECRET || '',
+  WEBHOOK_IP_WHITELIST: process.env.WEBHOOK_IP_WHITELIST || '',
 } as const;
 
 export function validateEnv(): void {

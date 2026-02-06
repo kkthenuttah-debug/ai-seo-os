@@ -6,6 +6,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { env } from './lib/config.js';
 import { logger } from './lib/logger.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { integrationsRoutes } from './routes/integrations.js';
+import { webhooksRoutes } from './routes/webhooks.js';
 
 export async function createApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -29,6 +31,9 @@ export async function createApp(): Promise<FastifyInstance> {
     max: 100,
     timeWindow: '15 minutes',
   });
+
+  await app.register(integrationsRoutes, { prefix: '/api' });
+  await app.register(webhooksRoutes, { prefix: '/api' });
 
   app.addHook('onRequest', async (request, reply) => {
     logger.debug({ 
