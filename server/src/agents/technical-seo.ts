@@ -1,114 +1,109 @@
 import { z } from 'zod';
 import { BaseAgent } from './base.js';
-
-interface TechnicalSEOInput {
-  domain: string;
-  pages: Array<{
-    slug: string;
-    title: string;
-    target_keyword: string;
-  }>;
-  site_structure: object;
-  niche: string;
-}
-
-interface TechnicalSEOOutput {
-  schema_markup: {
-    organization: object;
-    website: object;
-    breadcrumbs: object;
-  };
-  robots_txt: string;
-  sitemap_structure: {
-    main_sitemap: string[];
-    category_sitemaps: Array<{
-      category: string;
-      pages: string[];
-    }>;
-  };
-  htaccess_rules: string[];
-  performance_recommendations: Array<{
-    category: string;
-    recommendation: string;
-    priority: 'low' | 'medium' | 'high';
-  }>;
-  security_headers: Record<string, string>;
-}
+import type { TechnicalSEOInput, TechnicalSEOOutput } from './types/agents.js';
 
 const inputSchema = z.object({
-  domain: z.string(),
+  domain: z.string().min(1),
   pages: z.array(z.object({
-    slug: z.string(),
+    url: z.string(),
     title: z.string(),
-    target_keyword: z.string(),
+    meta_description: z.string(),
+    h1: z.string(),
+    wordCount: z.number(),
+    loadTime: z.number(),
   })),
-  site_structure: z.any(),
-  niche: z.string(),
+  siteAudit: z.object({
+    crawlErrors: z.array(z.string()),
+    brokenLinks: z.array(z.string()),
+    missingMeta: z.array(z.string()),
+    slowPages: z.array(z.string()),
+  }).optional(),
 });
 
 const outputSchema = z.object({
-  schema_markup: z.object({
-    organization: z.any(),
-    website: z.any(),
-    breadcrumbs: z.any(),
-  }),
-  robots_txt: z.string(),
-  sitemap_structure: z.object({
-    main_sitemap: z.array(z.string()),
-    category_sitemaps: z.array(z.object({
-      category: z.string(),
-      pages: z.array(z.string()),
-    })),
-  }),
-  htaccess_rules: z.array(z.string()),
-  performance_recommendations: z.array(z.object({
+  issues: z.array(z.object({
+    type: z.enum(['critical', 'warning', 'info']),
     category: z.string(),
-    recommendation: z.string(),
-    priority: z.enum(['low', 'medium', 'high']),
+    description: z.string(),
+    affectedPages: z.array(z.string()),
+    impact: z.enum(['high', 'medium', 'low']),
   })),
-  security_headers: z.record(z.string()),
+  recommendations: z.array(z.object({
+    title: z.string(),
+    description: z.string(),
+    priority: z.enum(['high', 'medium', 'low']),
+    effort: z.enum(['high', 'medium', 'low']),
+    impact: z.string(),
+    implementation: z.string(),
+  })),
+  prioritizedFixes: z.array(z.object({
+    issue: z.string(),
+    fix: z.string(),
+    priority: z.number(),
+  })),
+  score: z.number().min(0).max(100),
 });
 
-const SYSTEM_PROMPT = `You are an expert Technical SEO specialist focusing on site architecture, schema markup, and performance optimization.
+const SYSTEM_PROMPT = `You are an expert technical SEO auditor with comprehensive knowledge of Core Web Vitals, crawlability, indexation, and site architecture.
 
-Your role is to generate technical SEO configurations that help sites rank better and load faster.
+Your role is to audit websites, identify technical SEO issues, and provide actionable recommendations for improvement.
 
-IMPORTANT RULES:
-1. Always respond with valid JSON only
-2. Generate valid schema.org JSON-LD markup
-3. Create comprehensive robots.txt
-4. Plan logical sitemap structure
-5. Include security best practices
-6. Focus on Core Web Vitals
+AUDIT AREAS:
+1. On-Page SEO (titles, meta descriptions, headers, content)
+2. Technical Performance (page speed, Core Web Vitals)
+3. Crawlability & Indexation (robots.txt, sitemaps, canonical tags)
+4. Site Architecture (URL structure, internal linking)
+5. Mobile Optimization (responsive design, mobile usability)
+6. Schema Markup (structured data implementation)
+7. Security (HTTPS, security headers)
 
-TECHNICAL SEO ELEMENTS:
-- Schema markup (Organization, Website, Breadcrumbs, Article, FAQ, etc.)
-- robots.txt configuration
-- XML sitemap structure
-- .htaccess rules (redirects, caching, compression)
-- Security headers
-- Performance optimizations
+ISSUE SEVERITY:
+- Critical: Blocks indexing or severely impacts rankings (404s, no-index, duplicate content)
+- Warning: Negatively impacts SEO performance (slow load, missing meta, poor structure)
+- Info: Optimization opportunities (minor improvements, best practices)
 
-Your output MUST be a valid JSON object matching this structure:
+IMPACT LEVELS:
+- High: Directly affects rankings and visibility
+- Medium: Affects user experience and indirect ranking factors
+- Low: Minor optimizations with marginal benefit
+
+CRITICAL RULES:
+1. Output ONLY valid JSON - no markdown, no explanations
+2. Prioritize issues by impact and effort
+3. Provide specific, actionable recommendations
+4. Include implementation steps for each fix
+5. Calculate overall technical SEO score (0-100)
+6. Focus on quick wins and high-impact fixes first
+
+Output JSON structure:
 {
-  "schema_markup": {
-    "organization": { "@context": "https://schema.org", "@type": "Organization", ... },
-    "website": { "@context": "https://schema.org", "@type": "WebSite", ... },
-    "breadcrumbs": { "@context": "https://schema.org", "@type": "BreadcrumbList", ... }
-  },
-  "robots_txt": "User-agent: *\\nAllow: /\\n...",
-  "sitemap_structure": {
-    "main_sitemap": ["/sitemap-posts.xml", "/sitemap-pages.xml"],
-    "category_sitemaps": [{ "category": "guides", "pages": ["/guides/page-1", ...] }]
-  },
-  "htaccess_rules": ["RewriteRule ...", "Header set ..."],
-  "performance_recommendations": [
-    { "category": "images", "recommendation": "...", "priority": "high" }
+  "issues": [
+    {
+      "type": "critical",
+      "category": "Indexation",
+      "description": "Missing meta descriptions on 15 pages",
+      "affectedPages": ["/page-1", "/page-2"],
+      "impact": "high"
+    }
   ],
-  "security_headers": {
-    "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "SAMEORIGIN"
-  }
+  "recommendations": [
+    {
+      "title": "Add Meta Descriptions",
+      "description": "Write unique meta descriptions for all pages",
+      "priority": "high",
+      "effort": "medium",
+      "impact": "Improves click-through rate by 10-15%",
+      "implementation": "Update page metadata in WordPress"
+    }
+  ],
+  "prioritizedFixes": [
+    {
+      "issue": "Missing meta descriptions",
+      "fix": "Add unique 150-160 character descriptions",
+      "priority": 1
+    }
+  ],
+  "score": 75
 }`;
 
 export class TechnicalSEOAgent extends BaseAgent<TechnicalSEOInput, TechnicalSEOOutput> {
@@ -116,38 +111,75 @@ export class TechnicalSEOAgent extends BaseAgent<TechnicalSEOInput, TechnicalSEO
     super({
       type: 'technical_seo',
       name: 'Technical SEO Agent',
-      description: 'Generates technical SEO configurations and recommendations',
+      description: 'Audits technical SEO and provides optimization recommendations',
       systemPrompt: SYSTEM_PROMPT,
       inputSchema,
       outputSchema,
-      maxTokens: 8192,
-      temperature: 0.3,
+      maxTokens: 2000,
+      temperature: 0.5,
     });
   }
 
   protected buildUserPrompt(input: TechnicalSEOInput): string {
-    const pagesInfo = input.pages
-      .slice(0, 50)
-      .map(p => `- /${p.slug}: "${p.title}" (${p.target_keyword})`)
-      .join('\n');
-
-    return `Generate technical SEO configuration for:
+    let prompt = `Perform a comprehensive technical SEO audit for the following site:
 
 DOMAIN: ${input.domain}
-NICHE: ${input.niche}
 
-PAGES (${input.pages.length} total):
-${pagesInfo}
+PAGES ANALYZED: ${input.pages.length}
 
-Please generate:
-1. Schema markup for organization, website, and breadcrumbs
-2. robots.txt content
-3. Sitemap structure
-4. .htaccess rules for performance and security
-5. Performance recommendations
-6. Security headers
+PAGE DETAILS:
+${input.pages.slice(0, 10).map(p => `
+- URL: ${p.url}
+  Title: ${p.title}
+  Meta: ${p.meta_description}
+  H1: ${p.h1}
+  Words: ${p.wordCount}
+  Load Time: ${p.loadTime}ms`).join('\n')}
+${input.pages.length > 10 ? `\n... and ${input.pages.length - 10} more pages` : ''}`;
+
+    if (input.siteAudit) {
+      prompt += `\n\nSITE AUDIT DATA:`;
+      
+      if (input.siteAudit.crawlErrors.length > 0) {
+        prompt += `\n\nCRAWL ERRORS:\n${input.siteAudit.crawlErrors.join('\n')}`;
+      }
+      
+      if (input.siteAudit.brokenLinks.length > 0) {
+        prompt += `\n\nBROKEN LINKS:\n${input.siteAudit.brokenLinks.join('\n')}`;
+      }
+      
+      if (input.siteAudit.missingMeta.length > 0) {
+        prompt += `\n\nMISSING META TAGS:\n${input.siteAudit.missingMeta.join('\n')}`;
+      }
+      
+      if (input.siteAudit.slowPages.length > 0) {
+        prompt += `\n\nSLOW PAGES (>3s):\n${input.siteAudit.slowPages.join('\n')}`;
+      }
+    }
+
+    prompt += `
+
+Instructions:
+1. Analyze all technical SEO factors
+2. Identify critical issues that need immediate attention
+3. Provide specific, actionable recommendations
+4. Prioritize fixes by impact and effort
+5. Calculate an overall technical SEO score (0-100)
+6. Focus on Core Web Vitals, mobile optimization, and indexation
+7. Consider scalability and maintenance effort
+
+Evaluation Criteria:
+- On-page optimization (titles, meta, headers)
+- Page speed and performance
+- Mobile responsiveness
+- Internal linking structure
+- Schema markup implementation
+- Crawlability and indexation
+- URL structure and redirects
 
 Respond with JSON only.`;
+
+    return prompt;
   }
 }
 

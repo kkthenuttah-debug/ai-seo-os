@@ -1,94 +1,76 @@
 import { z } from 'zod';
 import { BaseAgent } from './base.js';
-
-interface PublisherInput {
-  page_title: string;
-  page_slug: string;
-  content_html: string;
-  meta_title: string;
-  meta_description: string;
-  target_keyword: string;
-}
-
-interface PublisherOutput {
-  publish_ready: boolean;
-  seo_checklist: Array<{
-    item: string;
-    passed: boolean;
-    recommendation?: string;
-  }>;
-  final_meta_title: string;
-  final_meta_description: string;
-  focus_keyword: string;
-  secondary_keywords: string[];
-  estimated_reading_time: number;
-  content_quality_score: number;
-}
+import type { PublisherInput, PublisherOutput } from './types/agents.js';
 
 const inputSchema = z.object({
-  page_title: z.string(),
-  page_slug: z.string(),
-  content_html: z.string(),
-  meta_title: z.string(),
-  meta_description: z.string(),
-  target_keyword: z.string(),
+  projectId: z.string(),
+  pageId: z.string(),
+  publishSettings: z.object({
+    scheduleDate: z.string().optional(),
+    status: z.enum(['publish', 'draft', 'pending']).optional(),
+    categories: z.array(z.string()).optional(),
+    tags: z.array(z.string()).optional(),
+  }).optional(),
 });
 
 const outputSchema = z.object({
-  publish_ready: z.boolean(),
-  seo_checklist: z.array(z.object({
-    item: z.string(),
-    passed: z.boolean(),
-    recommendation: z.string().optional(),
-  })),
-  final_meta_title: z.string(),
-  final_meta_description: z.string(),
-  focus_keyword: z.string(),
-  secondary_keywords: z.array(z.string()),
-  estimated_reading_time: z.number(),
-  content_quality_score: z.number(),
+  published: z.boolean(),
+  postId: z.number(),
+  url: z.string(),
+  publishedAt: z.string(),
+  status: z.string(),
+  errors: z.array(z.string()).optional(),
 });
 
-const SYSTEM_PROMPT = `You are an expert SEO quality assurance specialist preparing content for publication.
+const SYSTEM_PROMPT = `You are an expert WordPress publishing coordinator with knowledge of content management best practices.
 
-Your role is to perform final checks, optimize meta tags, and ensure content meets SEO best practices before publishing.
+Your role is to coordinate the publishing process, handle WordPress API interactions, and ensure content is properly published.
 
-IMPORTANT RULES:
-1. Always respond with valid JSON only
-2. Perform comprehensive SEO checklist
-3. Optimize meta title and description for CTR
-4. Verify keyword optimization
-5. Calculate content quality score (0-100)
-6. Only mark as publish-ready if all critical items pass
+PUBLISHING WORKFLOW:
+1. Validate content is ready to publish
+2. Check WordPress connection and authentication
+3. Create or update post in WordPress
+4. Set proper categories and tags
+5. Apply Elementor layout data
+6. Set featured image if available
+7. Publish or schedule content
+8. Verify publication success
+9. Update internal tracking
 
-SEO CHECKLIST ITEMS:
-- Keyword in title
-- Keyword in meta description
-- Keyword in first 100 words
-- Keyword in at least one H2
-- Meta title under 60 characters
-- Meta description under 160 characters
-- Content has proper heading structure (H1, H2, H3)
-- Content is at least 300 words
-- Content has internal links
-- Content has external links (optional)
-- Images have alt text (if applicable)
-- No duplicate content signals
-- Readable content (short paragraphs, bullets)
+WORDPRESS POST FIELDS:
+- title: Post title
+- content: Post HTML content
+- status: publish, draft, or pending
+- categories: Category IDs or names
+- tags: Tag names
+- meta: Custom fields including Elementor data
+- featured_media: Featured image ID
+- date: Schedule date (if future)
 
-Your output MUST be a valid JSON object matching this structure:
+ERROR HANDLING:
+- Authentication failures: Re-authenticate
+- Rate limiting: Implement backoff
+- Duplicate content: Update existing post
+- Invalid data: Fix and retry
+- Connection errors: Retry with exponential backoff
+
+CRITICAL RULES:
+1. Output ONLY valid JSON - no markdown, no explanations
+2. Verify all required fields are present
+3. Handle WordPress API errors gracefully
+4. Track publication status accurately
+5. Update internal records after publication
+6. Support scheduled publishing
+7. Preserve existing content if updating
+
+Output JSON structure:
 {
-  "publish_ready": true,
-  "seo_checklist": [
-    { "item": "Keyword in title", "passed": true },
-    { "item": "Meta title under 60 chars", "passed": false, "recommendation": "Shorten to..." }
-  ],
-  "final_meta_title": "Optimized meta title",
-  "final_meta_description": "Optimized meta description with call to action",
-  "focus_keyword": "main keyword",
-  "secondary_keywords": ["related1", "related2"],
-  "estimated_reading_time": 5,
-  "content_quality_score": 85
+  "published": true,
+  "postId": 123,
+  "url": "https://example.com/post-slug",
+  "publishedAt": "2024-01-15T10:30:00Z",
+  "status": "publish",
+  "errors": []
 }`;
 
 export class PublisherAgent extends BaseAgent<PublisherInput, PublisherOutput> {
@@ -96,36 +78,62 @@ export class PublisherAgent extends BaseAgent<PublisherInput, PublisherOutput> {
     super({
       type: 'publisher',
       name: 'Publisher Agent',
-      description: 'Performs final SEO checks before publishing',
+      description: 'Handles WordPress publishing and post management',
       systemPrompt: SYSTEM_PROMPT,
       inputSchema,
       outputSchema,
-      maxTokens: 4096,
-      temperature: 0.3,
+      maxTokens: 500,
+      temperature: 0.2,
     });
   }
 
   protected buildUserPrompt(input: PublisherInput): string {
-    return `Perform final SEO checks on this page before publishing:
+    let prompt = `Coordinate the publishing of content to WordPress:
 
-PAGE TITLE: ${input.page_title}
-PAGE SLUG: ${input.page_slug}
-TARGET KEYWORD: ${input.target_keyword}
+PROJECT ID: ${input.projectId}
+PAGE ID: ${input.pageId}`;
 
-META TITLE: ${input.meta_title}
-META DESCRIPTION: ${input.meta_description}
+    if (input.publishSettings) {
+      prompt += `\n\nPUBLISH SETTINGS:`;
+      
+      if (input.publishSettings.status) {
+        prompt += `\nStatus: ${input.publishSettings.status}`;
+      }
+      
+      if (input.publishSettings.scheduleDate) {
+        prompt += `\nSchedule: ${input.publishSettings.scheduleDate}`;
+      }
+      
+      if (input.publishSettings.categories && input.publishSettings.categories.length > 0) {
+        prompt += `\nCategories: ${input.publishSettings.categories.join(', ')}`;
+      }
+      
+      if (input.publishSettings.tags && input.publishSettings.tags.length > 0) {
+        prompt += `\nTags: ${input.publishSettings.tags.join(', ')}`;
+      }
+    }
 
-CONTENT:
-${input.content_html}
+    prompt += `
 
-Please:
-1. Run through the complete SEO checklist
-2. Optimize meta title and description for CTR
-3. Identify focus and secondary keywords
-4. Calculate content quality score
-5. Determine if page is ready to publish
+Instructions:
+1. Retrieve page content and metadata from database
+2. Validate all required fields are present
+3. Connect to WordPress site
+4. Create or update WordPress post
+5. Apply Elementor layout data
+6. Set categories and tags
+7. Publish or schedule the post
+8. Return publication details
+
+Handle Errors:
+- Missing content: Return error, do not publish
+- WordPress connection failure: Retry up to 3 times
+- Duplicate content: Update existing post
+- Invalid Elementor data: Publish without Elementor
 
 Respond with JSON only.`;
+
+    return prompt;
   }
 }
 

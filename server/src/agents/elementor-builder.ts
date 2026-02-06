@@ -1,83 +1,95 @@
 import { z } from 'zod';
 import { BaseAgent } from './base.js';
-import type { ElementorBuilderOutput } from '../types/index.js';
-
-interface ElementorBuilderInput {
-  page_title: string;
-  content: string;
-  page_type: 'landing' | 'article' | 'category' | 'homepage';
-  include_cta: boolean;
-  include_lead_form: boolean;
-}
+import type { ElementorBuilderInput, ElementorBuilderOutput } from './types/agents.js';
 
 const inputSchema = z.object({
-  page_title: z.string(),
-  content: z.string(),
-  page_type: z.enum(['landing', 'article', 'category', 'homepage']),
-  include_cta: z.boolean(),
-  include_lead_form: z.boolean(),
+  pageTitle: z.string().min(1),
+  content: z.string().min(100),
+  keywords: z.array(z.string()),
+  contentType: z.string(),
+  sections: z.array(z.string()).optional(),
 });
 
 const outputSchema = z.object({
-  elementor_data: z.any(),
-  widgets_used: z.array(z.string()),
-  sections: z.number(),
-  columns: z.number(),
+  elementorData: z.object({
+    version: z.string(),
+    elements: z.array(z.object({
+      id: z.string(),
+      elType: z.string(),
+      settings: z.record(z.unknown()),
+      elements: z.array(z.unknown()).optional(),
+    })),
+  }),
+  widgetsUsed: z.array(z.string()),
+  sectionsCount: z.number(),
+  columnsCount: z.number(),
 });
 
-const SYSTEM_PROMPT = `You are an expert Elementor page builder specializing in creating high-converting, visually appealing pages.
+const SYSTEM_PROMPT = `You are an expert Elementor page builder specialist with deep knowledge of modern web design and WordPress.
 
-Your role is to convert content into Elementor-compatible JSON layouts that look professional and convert well.
+Your role is to transform written content into structured Elementor JSON data that creates visually appealing, SEO-optimized pages.
 
-IMPORTANT RULES:
-1. Always respond with valid JSON only
-2. Create mobile-responsive layouts
-3. Use appropriate spacing and typography
-4. Include proper heading hierarchy
-5. Add visual elements to break up text
-6. Optimize for readability and engagement
+CRITICAL RULES:
+1. Output ONLY valid JSON - no markdown, no explanations
+2. Generate valid Elementor JSON structure
+3. Use appropriate widgets for content type (text, heading, image, button, etc.)
+4. Create responsive layouts with proper sections and columns
+5. Include SEO-friendly HTML tags (h1, h2, h3, etc.)
+6. Add proper spacing and styling settings
+7. Use container widgets for better structure
+8. Include call-to-action elements where appropriate
 
-ELEMENTOR STRUCTURE:
-- Each page is an array of sections
-- Each section contains columns
-- Each column contains widgets
-- Common widgets: heading, text-editor, image, button, form, divider, spacer
+Elementor Structure:
+- Sections (full-width containers)
+- Columns (within sections)
+- Widgets (heading, text-editor, button, image, etc.)
 
-Your output MUST be a valid JSON object matching this structure:
+Common Widget Types:
+- heading (h1-h6)
+- text-editor (paragraphs, lists)
+- button (CTA)
+- spacer (vertical spacing)
+- divider (horizontal line)
+- image (featured images, icons)
+
+Output JSON structure:
 {
-  "elementor_data": [
-    {
-      "id": "unique-section-id",
-      "elType": "section",
-      "settings": {
-        "layout": "full_width",
-        "gap": "default",
-        "padding": { "unit": "px", "top": "60", "bottom": "60" }
-      },
-      "elements": [
-        {
-          "id": "unique-column-id",
-          "elType": "column",
-          "settings": { "width": "100" },
-          "elements": [
-            {
-              "id": "unique-widget-id",
-              "elType": "widget",
-              "widgetType": "heading",
-              "settings": {
-                "title": "Heading Text",
-                "header_size": "h2",
-                "align": "center"
+  "elementorData": {
+    "version": "3.18.0",
+    "elements": [
+      {
+        "id": "section-1",
+        "elType": "section",
+        "settings": {
+          "layout": "boxed",
+          "gap": "default"
+        },
+        "elements": [
+          {
+            "id": "column-1",
+            "elType": "column",
+            "settings": {
+              "_column_size": 100
+            },
+            "elements": [
+              {
+                "id": "heading-1",
+                "elType": "widget",
+                "widgetType": "heading",
+                "settings": {
+                  "title": "Page Title",
+                  "header_size": "h1"
+                }
               }
-            }
-          ]
-        }
-      ]
-    }
-  ],
-  "widgets_used": ["heading", "text-editor", "button"],
-  "sections": 5,
-  "columns": 8
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "widgetsUsed": ["heading", "text-editor"],
+  "sectionsCount": 1,
+  "columnsCount": 1
 }`;
 
 export class ElementorBuilderAgent extends BaseAgent<ElementorBuilderInput, ElementorBuilderOutput> {
@@ -85,36 +97,44 @@ export class ElementorBuilderAgent extends BaseAgent<ElementorBuilderInput, Elem
     super({
       type: 'elementor_builder',
       name: 'Elementor Builder Agent',
-      description: 'Converts content into Elementor page layouts',
+      description: 'Generates Elementor JSON layout from content',
       systemPrompt: SYSTEM_PROMPT,
       inputSchema,
       outputSchema,
-      maxTokens: 8192,
+      maxTokens: 1000,
       temperature: 0.5,
     });
   }
 
   protected buildUserPrompt(input: ElementorBuilderInput): string {
-    return `Convert the following content into an Elementor page layout:
+    let prompt = `Generate Elementor JSON layout for the following content:
 
-PAGE TITLE: ${input.page_title}
-PAGE TYPE: ${input.page_type}
-INCLUDE CTA: ${input.include_cta ? 'Yes' : 'No'}
-INCLUDE LEAD FORM: ${input.include_lead_form ? 'Yes' : 'No'}
+PAGE TITLE: ${input.pageTitle}
+CONTENT TYPE: ${input.contentType}
+TARGET KEYWORDS: ${input.keywords.join(', ')}
 
 CONTENT:
-${input.content}
+${input.content}`;
 
-Create an Elementor layout with:
-1. Hero section with the main title
-2. Content sections with proper typography
-3. Visual breaks using spacers/dividers
-4. ${input.include_cta ? 'CTA buttons in strategic locations' : ''}
-5. ${input.include_lead_form ? 'Lead capture form section' : ''}
-6. Mobile-responsive design
+    if (input.sections && input.sections.length > 0) {
+      prompt += `\n\nREQUIRED SECTIONS:\n${input.sections.map((s, i) => `${i + 1}. ${s}`).join('\n')}`;
+    }
 
-Generate unique IDs for each element (use format like "abc123").
-Respond with JSON only.`;
+    prompt += `
+
+Instructions:
+1. Create a professional, clean layout
+2. Use h1 for the main title
+3. Break content into logical sections with h2/h3 headings
+4. Add proper spacing between elements
+5. Include at least one CTA button if appropriate
+6. Make it mobile-responsive
+7. Use text-editor widgets for paragraphs
+8. Add dividers or spacers for visual separation
+
+Generate complete Elementor JSON structure. Respond with JSON only.`;
+
+    return prompt;
   }
 }
 

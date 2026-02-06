@@ -12,7 +12,7 @@ interface SiteArchitectInput {
 const inputSchema = z.object({
   niche: z.string(),
   target_audience: z.string(),
-  market_research: z.any(),
+  market_research: z.any() as z.ZodType<MarketResearchOutput>,
   domain: z.string(),
 });
 
@@ -46,7 +46,7 @@ const outputSchema = z.object({
   technical_requirements: z.object({
     schema_types: z.array(z.string()),
     required_plugins: z.array(z.string()),
-    performance_targets: z.any(),
+    performance_targets: z.record(z.unknown()),
   }),
 });
 

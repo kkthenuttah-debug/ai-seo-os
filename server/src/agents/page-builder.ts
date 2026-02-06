@@ -1,93 +1,53 @@
 import { z } from 'zod';
 import { BaseAgent } from './base.js';
-
-interface PageBuilderInput {
-  page_title: string;
-  page_slug: string;
-  target_keyword: string;
-  content_type: string;
-  niche: string;
-  tone: string;
-  word_count: number;
-  include_cta: boolean;
-  include_lead_form: boolean;
-  available_internal_links: string[];
-}
-
-interface PageBuilderOutput {
-  title: string;
-  slug: string;
-  meta_title: string;
-  meta_description: string;
-  content_html: string;
-  elementor_data: object;
-  internal_links: string[];
-  schema_markup: object;
-  word_count: number;
-}
+import { contentBuilderAgent } from './content-builder.js';
+import { elementorBuilderAgent } from './elementor-builder.js';
+import { nanoid } from 'nanoid';
+import type { PageBuilderInput, PageBuilderOutput } from './types/agents.js';
 
 const inputSchema = z.object({
-  page_title: z.string(),
-  page_slug: z.string(),
-  target_keyword: z.string(),
-  content_type: z.string(),
-  niche: z.string(),
+  title: z.string().min(1),
+  slug: z.string().min(1),
+  targetKeyword: z.string().min(1),
+  contentType: z.string(),
   tone: z.string(),
-  word_count: z.number(),
-  include_cta: z.boolean(),
-  include_lead_form: z.boolean(),
-  available_internal_links: z.array(z.string()),
+  wordCount: z.number().min(300),
 });
 
 const outputSchema = z.object({
+  pageId: z.string(),
   title: z.string(),
   slug: z.string(),
-  meta_title: z.string(),
-  meta_description: z.string(),
-  content_html: z.string(),
-  elementor_data: z.any(),
-  internal_links: z.array(z.string()),
-  schema_markup: z.any(),
-  word_count: z.number(),
+  content: z.string(),
+  metaTitle: z.string(),
+  metaDescription: z.string(),
+  elementorData: z.record(z.unknown()),
+  internalLinks: z.array(z.string()),
+  readyToPublish: z.boolean(),
 });
 
-const SYSTEM_PROMPT = `You are an expert full-stack page builder combining content creation, visual layout design, and SEO optimization.
+const SYSTEM_PROMPT = `You are an expert page assembly coordinator that orchestrates content and layout generation.
 
-Your role is to create complete, publish-ready pages with content, Elementor layouts, and proper SEO markup.
+Your role is to coordinate the creation of complete, publish-ready pages by combining content and Elementor layouts.
 
-IMPORTANT RULES:
-1. Always respond with valid JSON only
-2. Create comprehensive, valuable content
-3. Design visually appealing Elementor layouts
-4. Include proper schema markup
-5. Optimize for the target keyword
-6. Add relevant internal links
+CRITICAL RULES:
+1. Output ONLY valid JSON - no markdown, no explanations
+2. Ensure all page elements are properly assembled
+3. Validate that content is complete and SEO-optimized
+4. Confirm Elementor layout matches the content
+5. Mark as ready to publish only if all elements are present
 
-PAGE COMPONENTS:
-- SEO-optimized content with proper heading hierarchy
-- Elementor layout for visual presentation
-- Meta title and description
-- Schema markup (Article, FAQ if applicable)
-- Internal linking strategy
-
-ELEMENTOR STRUCTURE:
-- Hero section with title
-- Content sections with proper spacing
-- CTA buttons if requested
-- Lead form section if requested
-- Mobile-responsive design
-
-Your output MUST be a valid JSON object matching this structure:
+Output JSON structure:
 {
-  "title": "H1 page title",
+  "pageId": "unique-page-id",
+  "title": "Page Title",
   "slug": "page-slug",
-  "meta_title": "SEO title under 60 chars",
-  "meta_description": "Meta description under 160 chars",
-  "content_html": "Full HTML content with headings, paragraphs, lists",
-  "elementor_data": [{ "id": "...", "elType": "section", ... }],
-  "internal_links": ["linked-page-slug-1", "linked-page-slug-2"],
-  "schema_markup": { "@context": "https://schema.org", "@type": "Article", ... },
-  "word_count": 1500
+  "content": "Full HTML content",
+  "metaTitle": "SEO Meta Title",
+  "metaDescription": "SEO Meta Description",
+  "elementorData": {},
+  "internalLinks": ["/page-1", "/page-2"],
+  "readyToPublish": true
 }`;
 
 export class PageBuilderAgent extends BaseAgent<PageBuilderInput, PageBuilderOutput> {
@@ -95,39 +55,62 @@ export class PageBuilderAgent extends BaseAgent<PageBuilderInput, PageBuilderOut
     super({
       type: 'page_builder',
       name: 'Page Builder Agent',
-      description: 'Creates complete publish-ready pages with content and layout',
+      description: 'Assembles complete pages with content and Elementor layout',
       systemPrompt: SYSTEM_PROMPT,
       inputSchema,
       outputSchema,
-      maxTokens: 8192,
-      temperature: 0.7,
+      maxTokens: 1000,
+      temperature: 0.3,
     });
   }
 
   protected buildUserPrompt(input: PageBuilderInput): string {
-    return `Create a complete, publish-ready page:
+    return `Assemble a complete page with the following specifications:
 
-PAGE DETAILS:
-- Title: ${input.page_title}
-- Slug: ${input.page_slug}
-- Target Keyword: ${input.target_keyword}
-- Content Type: ${input.content_type}
-- Niche: ${input.niche}
-- Tone: ${input.tone}
-- Target Word Count: ${input.word_count}
-- Include CTA: ${input.include_cta ? 'Yes' : 'No'}
-- Include Lead Form: ${input.include_lead_form ? 'Yes' : 'No'}
+TITLE: ${input.title}
+SLUG: ${input.slug}
+TARGET KEYWORD: ${input.targetKeyword}
+CONTENT TYPE: ${input.contentType}
+TONE: ${input.tone}
+WORD COUNT: ${input.wordCount}
 
-AVAILABLE INTERNAL LINKS:
-${input.available_internal_links.slice(0, 20).join('\n')}
-
-Create:
-1. SEO-optimized content matching the target keyword
-2. Elementor layout for visual presentation
-3. Schema markup (Article type)
-4. Internal links to relevant pages
-
+Confirm all elements are present and the page is ready to publish.
 Respond with JSON only.`;
+  }
+
+  async run(projectId: string, input: PageBuilderInput): Promise<PageBuilderOutput> {
+    const contentInput = {
+      page_title: input.title,
+      target_keyword: input.targetKeyword,
+      content_type: input.contentType,
+      tone: input.tone,
+      word_count: input.wordCount,
+    };
+
+    const contentOutput = await contentBuilderAgent.run(projectId, contentInput);
+
+    const elementorInput = {
+      pageTitle: input.title,
+      content: contentOutput.content,
+      keywords: [input.targetKeyword],
+      contentType: input.contentType,
+    };
+
+    const elementorOutput = await elementorBuilderAgent.run(projectId, elementorInput);
+
+    const pageId = nanoid();
+
+    return {
+      pageId,
+      title: contentOutput.title,
+      slug: input.slug,
+      content: contentOutput.content,
+      metaTitle: contentOutput.meta_title,
+      metaDescription: contentOutput.meta_description,
+      elementorData: elementorOutput.elementorData,
+      internalLinks: contentOutput.suggested_internal_links,
+      readyToPublish: true,
+    };
   }
 }
 
