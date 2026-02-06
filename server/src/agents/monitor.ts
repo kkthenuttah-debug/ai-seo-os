@@ -1,142 +1,126 @@
 import { z } from 'zod';
 import { BaseAgent } from './base.js';
-
-interface MonitorInput {
-  project_id: string;
-  gsc_snapshots: Array<{
-    date: string;
-    total_clicks: number;
-    total_impressions: number;
-    average_ctr: number;
-    average_position: number;
-  }>;
-  pages: Array<{
-    slug: string;
-    title: string;
-    status: string;
-    published_at: string | null;
-  }>;
-  recent_rankings: Array<{
-    keyword: string;
-    position: number;
-    previous_position: number | null;
-    url: string;
-  }>;
-}
-
-interface MonitorOutput {
-  health_score: number;
-  summary: string;
-  trends: {
-    clicks_trend: 'up' | 'down' | 'stable';
-    impressions_trend: 'up' | 'down' | 'stable';
-    ctr_trend: 'up' | 'down' | 'stable';
-    position_trend: 'up' | 'down' | 'stable';
-  };
-  alerts: Array<{
-    type: 'warning' | 'critical' | 'opportunity';
-    message: string;
-    affected_pages: string[];
-    recommended_action: string;
-  }>;
-  optimization_candidates: Array<{
-    page_slug: string;
-    reason: string;
-    priority: 'low' | 'medium' | 'high';
-  }>;
-  content_suggestions: string[];
-}
+import type { MonitorInput, MonitorOutput } from './types/agents.js';
 
 const inputSchema = z.object({
-  project_id: z.string(),
-  gsc_snapshots: z.array(z.object({
+  projectId: z.string(),
+  gscSnapshots: z.array(z.object({
     date: z.string(),
-    total_clicks: z.number(),
-    total_impressions: z.number(),
-    average_ctr: z.number(),
-    average_position: z.number(),
+    totalClicks: z.number(),
+    totalImpressions: z.number(),
+    averageCtr: z.number(),
+    averagePosition: z.number(),
   })),
   pages: z.array(z.object({
-    slug: z.string(),
-    title: z.string(),
-    status: z.string(),
-    published_at: z.string().nullable(),
-  })),
-  recent_rankings: z.array(z.object({
-    keyword: z.string(),
-    position: z.number(),
-    previous_position: z.number().nullable(),
+    pageId: z.string(),
     url: z.string(),
+    targetKeyword: z.string(),
   })),
 });
 
 const outputSchema = z.object({
-  health_score: z.number(),
-  summary: z.string(),
-  trends: z.object({
-    clicks_trend: z.enum(['up', 'down', 'stable']),
-    impressions_trend: z.enum(['up', 'down', 'stable']),
-    ctr_trend: z.enum(['up', 'down', 'stable']),
-    position_trend: z.enum(['up', 'down', 'stable']),
-  }),
+  rankings: z.array(z.object({
+    keyword: z.string(),
+    position: z.number(),
+    previousPosition: z.number().nullable(),
+    change: z.number(),
+    url: z.string(),
+    pageId: z.string(),
+  })),
+  trends: z.array(z.object({
+    metric: z.string(),
+    direction: z.enum(['up', 'down', 'stable']),
+    changePercentage: z.number(),
+    analysis: z.string(),
+  })),
   alerts: z.array(z.object({
-    type: z.enum(['warning', 'critical', 'opportunity']),
+    type: z.enum(['warning', 'critical', 'info']),
     message: z.string(),
-    affected_pages: z.array(z.string()),
-    recommended_action: z.string(),
+    pageId: z.string().optional(),
+    keyword: z.string().optional(),
+    actionRequired: z.boolean(),
   })),
-  optimization_candidates: z.array(z.object({
-    page_slug: z.string(),
-    reason: z.string(),
-    priority: z.enum(['low', 'medium', 'high']),
+  recommendations: z.array(z.object({
+    type: z.string(),
+    pageId: z.string().optional(),
+    suggestion: z.string(),
+    priority: z.enum(['high', 'medium', 'low']),
   })),
-  content_suggestions: z.array(z.string()),
 });
 
-const SYSTEM_PROMPT = `You are an expert SEO monitoring analyst specializing in identifying trends, issues, and opportunities from search performance data.
+const SYSTEM_PROMPT = `You are an expert SEO performance analyst with deep expertise in Google Search Console data analysis and ranking optimization.
 
-Your role is to analyze project health, identify problems early, and recommend optimization actions.
+Your role is to monitor search performance, identify trends, detect issues, and provide actionable recommendations.
 
-IMPORTANT RULES:
-1. Always respond with valid JSON only
-2. Calculate health score objectively (0-100)
-3. Identify both problems and opportunities
-4. Prioritize actionable recommendations
-5. Consider trends over time, not just snapshots
+MONITORING AREAS:
+1. Keyword Rankings (position changes, opportunities, threats)
+2. Traffic Trends (clicks, impressions, CTR, position)
+3. Page Performance (individual page metrics)
+4. Anomaly Detection (sudden drops, spikes, unusual patterns)
+5. Competitive Analysis (visibility changes, new competitors)
 
-MONITORING FOCUS:
-- Traffic trends (clicks, impressions)
-- CTR changes (content/snippet issues)
-- Ranking movements (algorithm impacts, competition)
-- Content gaps (new opportunities)
-- Technical issues (drops in performance)
+ALERT TYPES:
+- Critical: Urgent issues requiring immediate action (major ranking drops, indexation errors)
+- Warning: Issues that need attention (declining CTR, slow position drops)
+- Info: Positive developments or minor observations (ranking improvements, new keywords)
 
-Your output MUST be a valid JSON object matching this structure:
+TREND ANALYSIS:
+- Compare current vs. previous period (day, week, month)
+- Identify patterns and seasonality
+- Detect anomalies and outliers
+- Project future performance
+
+CRITICAL RULES:
+1. Output ONLY valid JSON - no markdown, no explanations
+2. Analyze trends over time, not just point-in-time data
+3. Provide context for all alerts and recommendations
+4. Prioritize actionable insights
+5. Calculate percentage changes accurately
+6. Flag issues before they become critical
+7. Suggest specific optimization actions
+
+THRESHOLDS FOR ALERTS:
+- Critical: >30% drop in clicks or >10 position drop
+- Warning: 15-30% drop in clicks or 5-10 position drop
+- Info: Positive trends or <15% changes
+
+Output JSON structure:
 {
-  "health_score": 85,
-  "summary": "Brief summary of project health",
-  "trends": {
-    "clicks_trend": "up|down|stable",
-    "impressions_trend": "up|down|stable",
-    "ctr_trend": "up|down|stable",
-    "position_trend": "up|down|stable"
-  },
+  "rankings": [
+    {
+      "keyword": "target keyword",
+      "position": 5.2,
+      "previousPosition": 7.8,
+      "change": -2.6,
+      "url": "/page-url",
+      "pageId": "page-id"
+    }
+  ],
+  "trends": [
+    {
+      "metric": "clicks",
+      "direction": "up",
+      "changePercentage": 15.5,
+      "analysis": "Traffic increased by 15.5% compared to last period"
+    }
+  ],
   "alerts": [
     {
-      "type": "warning|critical|opportunity",
-      "message": "description of alert",
-      "affected_pages": ["page-slug-1", "page-slug-2"],
-      "recommended_action": "what to do"
+      "type": "warning",
+      "message": "CTR declined by 20% for 'target keyword'",
+      "pageId": "page-id",
+      "keyword": "target keyword",
+      "actionRequired": true
     }
   ],
-  "optimization_candidates": [
+  "recommendations": [
     {
-      "page_slug": "page-to-optimize",
-      "reason": "why this page needs optimization",
-      "priority": "low|medium|high"
+      "type": "optimization",
+      "pageId": "page-id",
+      "suggestion": "Update meta description to improve CTR",
+      "priority": "high"
     }
-  ],
-  "content_suggestions": ["new topic idea 1", "new topic idea 2"]
+  ]
 }`;
 
 export class MonitorAgent extends BaseAgent<MonitorInput, MonitorOutput> {
@@ -144,46 +128,52 @@ export class MonitorAgent extends BaseAgent<MonitorInput, MonitorOutput> {
     super({
       type: 'monitor',
       name: 'Monitor Agent',
-      description: 'Monitors project health and identifies optimization opportunities',
+      description: 'Tracks rankings, analyzes GSC data, and generates alerts',
       systemPrompt: SYSTEM_PROMPT,
       inputSchema,
       outputSchema,
-      maxTokens: 4096,
-      temperature: 0.5,
+      maxTokens: 1000,
+      temperature: 0.3,
     });
   }
 
   protected buildUserPrompt(input: MonitorInput): string {
-    const snapshotsSummary = input.gsc_snapshots
-      .slice(0, 14)
-      .map(s => `${s.date}: ${s.total_clicks} clicks, ${s.total_impressions} impr, ${(s.average_ctr * 100).toFixed(2)}% CTR, pos ${s.average_position.toFixed(1)}`)
+    const snapshotSummary = input.gscSnapshots
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, 7)
+      .map(s => `${s.date}: ${s.totalClicks} clicks, ${s.totalImpressions} impressions, ${s.averageCtr.toFixed(2)}% CTR, pos ${s.averagePosition.toFixed(1)}`)
       .join('\n');
 
-    const rankingSummary = input.recent_rankings
+    const pagesList = input.pages
       .slice(0, 20)
-      .map(r => {
-        const change = r.previous_position ? r.previous_position - r.position : 0;
-        const arrow = change > 0 ? '↑' : change < 0 ? '↓' : '→';
-        return `"${r.keyword}": pos ${r.position} (${arrow}${Math.abs(change)})`;
-      })
+      .map(p => `- ${p.url} (${p.targetKeyword})`)
       .join('\n');
 
-    return `Analyze the health and performance of this SEO project:
+    return `Analyze search performance and provide monitoring insights:
 
-GSC PERFORMANCE (Last 14 days):
-${snapshotsSummary}
+PROJECT: ${input.projectId}
 
-PUBLISHED PAGES: ${input.pages.filter(p => p.status === 'published').length} of ${input.pages.length}
+RECENT PERFORMANCE (last 7 days):
+${snapshotSummary}
 
-RANKING MOVEMENTS:
-${rankingSummary}
+TRACKED PAGES (${input.pages.length} total):
+${pagesList}
+${input.pages.length > 20 ? `... and ${input.pages.length - 20} more pages` : ''}
 
-Please provide:
-1. Overall health score (0-100)
-2. Trend analysis
-3. Any alerts or warnings
-4. Pages that need optimization
-5. New content suggestions
+Instructions:
+1. Analyze trends in clicks, impressions, CTR, and position
+2. Compare recent performance to previous periods
+3. Identify significant changes (>15% increase or decrease)
+4. Generate alerts for concerning trends
+5. Provide specific recommendations for optimization
+6. Prioritize actions by impact and urgency
+
+Analysis Focus:
+- Are rankings improving or declining?
+- Is CTR above or below expected levels?
+- Are there new ranking opportunities?
+- Are any pages underperforming?
+- What optimization actions should be taken?
 
 Respond with JSON only.`;
   }

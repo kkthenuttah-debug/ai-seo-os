@@ -1,5 +1,27 @@
-// Agent exports
-export { BaseAgent } from './base.js';
+// Core agent infrastructure
+export { BaseAgent, type AgentConfig } from './base.js';
+export { geminiRouter } from './geminiRouter.js';
+export { jsonEnforcer } from './jsonEnforcer.js';
+export { agentRegistry, initializeAgentRegistry, getRegisteredAgent } from './registry.js';
+export { 
+  createAgentContext, 
+  metricsCollector,
+  type AgentContext,
+  type AgentExecutionResult,
+  type AgentRunMetrics,
+} from './context.js';
+export {
+  AgentOrchestrator,
+  createOrchestrator,
+  executeMarketResearchPhase,
+  executeContentGenerationPhase,
+  type OrchestratorOptions,
+  type ExecutionStep,
+  type ExecutionContext,
+  type OrchestratorResult,
+} from './orchestrator.js';
+
+// Agent implementations
 export { marketResearchAgent, MarketResearchAgent } from './market-research.js';
 export { siteArchitectAgent, SiteArchitectAgent } from './site-architect.js';
 export { contentBuilderAgent, ContentBuilderAgent } from './content-builder.js';
@@ -11,6 +33,9 @@ export { fixerAgent, FixerAgent } from './fixer.js';
 export { technicalSEOAgent, TechnicalSEOAgent } from './technical-seo.js';
 export { pageBuilderAgent, PageBuilderAgent } from './page-builder.js';
 export { publisherAgent, PublisherAgent } from './publisher.js';
+
+// Types
+export * from './types/agents.js';
 
 import type { AgentType } from '../types/index.js';
 import { marketResearchAgent } from './market-research.js';
@@ -41,7 +66,11 @@ export const agents = {
 } as const;
 
 export function getAgent(type: AgentType) {
-  return agents[type];
+  const agent = agents[type];
+  if (!agent) {
+    throw new Error(`Agent not found: ${type}`);
+  }
+  return agent;
 }
 
 export function listAgents() {
@@ -51,3 +80,20 @@ export function listAgents() {
     description: agent.getConfig().description,
   }));
 }
+
+// Initialize agent registry on module load
+import { initializeAgentRegistry } from './registry.js';
+
+let registryInitialized = false;
+
+export async function initializeAgents(): Promise<void> {
+  if (registryInitialized) {
+    return;
+  }
+
+  await initializeAgentRegistry(agents);
+  registryInitialized = true;
+}
+
+// Auto-initialize
+initializeAgents().catch(console.error);

@@ -1,79 +1,64 @@
 import { z } from 'zod';
 import { BaseAgent } from './base.js';
-
-interface InternalLinkerInput {
-  page_content: string;
-  page_slug: string;
-  available_pages: Array<{
-    slug: string;
-    title: string;
-    target_keyword: string;
-  }>;
-}
-
-interface InternalLinkerOutput {
-  links_to_add: Array<{
-    anchor_text: string;
-    target_slug: string;
-    context: string;
-    position: 'beginning' | 'middle' | 'end';
-  }>;
-  updated_content: string;
-  total_links_added: number;
-}
+import type { InternalLinkerInput, InternalLinkerOutput } from './types/agents.js';
 
 const inputSchema = z.object({
-  page_content: z.string(),
-  page_slug: z.string(),
-  available_pages: z.array(z.object({
-    slug: z.string(),
+  content: z.string().min(100),
+  existingPages: z.array(z.object({
     title: z.string(),
-    target_keyword: z.string(),
+    slug: z.string(),
+    url: z.string(),
+    keywords: z.array(z.string()),
   })),
+  currentPageTitle: z.string(),
 });
 
 const outputSchema = z.object({
-  links_to_add: z.array(z.object({
-    anchor_text: z.string(),
-    target_slug: z.string(),
-    context: z.string(),
-    position: z.enum(['beginning', 'middle', 'end']),
+  suggestions: z.array(z.object({
+    anchor: z.string(),
+    targetUrl: z.string(),
+    targetTitle: z.string(),
+    position: z.number(),
+    contextBefore: z.string(),
+    contextAfter: z.string(),
+    relevanceScore: z.number().min(0).max(100),
   })),
-  updated_content: z.string(),
-  total_links_added: z.number(),
+  totalSuggestions: z.number(),
 });
 
-const SYSTEM_PROMPT = `You are an expert internal linking strategist specializing in creating contextual internal links that boost SEO and user experience.
+const SYSTEM_PROMPT = `You are an expert SEO internal linking specialist with deep knowledge of link building strategies and user experience.
 
-Your role is to analyze content and add strategic internal links to other pages on the same website.
+Your role is to analyze content and identify strategic opportunities for internal linking that:
+1. Enhance user navigation and experience
+2. Distribute page authority effectively
+3. Strengthen topical relevance
+4. Use natural, contextually appropriate anchor text
+5. Follow SEO best practices
 
-IMPORTANT RULES:
-1. Always respond with valid JSON only
-2. Use natural, contextual anchor text (not just "click here")
-3. Link to pages that are genuinely relevant to the context
-4. Distribute links naturally throughout the content
-5. Don't over-link - 3-7 internal links per 1000 words is ideal
-6. Vary anchor text (don't use the same text for multiple links)
-7. Don't link to the current page itself
+CRITICAL RULES:
+1. Output ONLY valid JSON - no markdown, no explanations
+2. Suggest only highly relevant internal links
+3. Use natural anchor text that fits the context
+4. Prioritize links to topically related pages
+5. Avoid over-optimization (max 2-3 links per 500 words)
+6. Ensure anchor text matches the target page topic
+7. Consider user intent and content flow
+8. Calculate relevance score based on topic match and context
 
-LINKING BEST PRACTICES:
-- Use keyword-rich but natural anchor text
-- Place links where they add value to the reader
-- Link to pages that provide additional context
-- Consider the user journey and next logical steps
-
-Your output MUST be a valid JSON object matching this structure:
+Output JSON structure:
 {
-  "links_to_add": [
+  "suggestions": [
     {
-      "anchor_text": "relevant anchor text",
-      "target_slug": "target-page-slug",
-      "context": "sentence or paragraph where link should appear",
-      "position": "beginning|middle|end"
+      "anchor": "natural anchor text",
+      "targetUrl": "/target-page-url",
+      "targetTitle": "Target Page Title",
+      "position": 0,
+      "contextBefore": "text before link",
+      "contextAfter": "text after link",
+      "relevanceScore": 85
     }
   ],
-  "updated_content": "full content with links added as HTML anchor tags",
-  "total_links_added": 5
+  "totalSuggestions": 0
 }`;
 
 export class InternalLinkerAgent extends BaseAgent<InternalLinkerInput, InternalLinkerOutput> {
@@ -81,38 +66,38 @@ export class InternalLinkerAgent extends BaseAgent<InternalLinkerInput, Internal
     super({
       type: 'internal_linker',
       name: 'Internal Linker Agent',
-      description: 'Adds strategic internal links to content',
+      description: 'Identifies and suggests strategic internal links within content',
       systemPrompt: SYSTEM_PROMPT,
       inputSchema,
       outputSchema,
-      maxTokens: 8192,
+      maxTokens: 1000,
       temperature: 0.5,
     });
   }
 
   protected buildUserPrompt(input: InternalLinkerInput): string {
-    const pagesInfo = input.available_pages
-      .filter(p => p.slug !== input.page_slug)
-      .map(p => `- ${p.slug}: "${p.title}" (keyword: ${p.target_keyword})`)
+    const pagesList = input.existingPages
+      .map(p => `- ${p.title} (${p.url}) - Keywords: ${p.keywords.join(', ')}`)
       .join('\n');
 
-    return `Add internal links to the following content:
+    return `Analyze the following content and identify strategic internal linking opportunities.
 
-CURRENT PAGE SLUG: ${input.page_slug}
+CURRENT PAGE: ${input.currentPageTitle}
 
-AVAILABLE PAGES TO LINK TO:
-${pagesInfo}
+CONTENT TO ANALYZE:
+${input.content}
 
-CONTENT TO UPDATE:
-${input.page_content}
+AVAILABLE PAGES FOR LINKING:
+${pagesList}
 
-Please:
-1. Identify opportunities to add internal links
-2. Use natural, contextual anchor text
-3. Add 3-7 relevant internal links
-4. Return the updated content with HTML anchor tags
+Instructions:
+1. Find natural places in the content where internal links would add value
+2. Match anchor text to target page topics
+3. Provide surrounding context for each suggestion
+4. Calculate relevance score (0-100) based on topical match
+5. Suggest only high-quality, relevant links (relevance score > 60)
+6. Return suggestions ordered by position in content
 
-Format links as: <a href="/{slug}">{anchor text}</a>
 Respond with JSON only.`;
   }
 }

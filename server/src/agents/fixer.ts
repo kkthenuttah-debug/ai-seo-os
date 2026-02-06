@@ -1,83 +1,85 @@
 import { z } from 'zod';
 import { BaseAgent } from './base.js';
-
-interface FixerInput {
-  error_type: 'content' | 'seo' | 'structure' | 'linking';
-  error_description: string;
-  current_content: string;
-  page_slug: string;
-  target_keyword: string;
-}
-
-interface FixerOutput {
-  diagnosis: string;
-  fixes_applied: Array<{
-    issue: string;
-    fix: string;
-    location: string;
-  }>;
-  fixed_content: string;
-  fixed_meta_title?: string;
-  fixed_meta_description?: string;
-  additional_recommendations: string[];
-}
+import type { FixerInput, FixerOutput } from './types/agents.js';
 
 const inputSchema = z.object({
-  error_type: z.enum(['content', 'seo', 'structure', 'linking']),
-  error_description: z.string(),
-  current_content: z.string(),
-  page_slug: z.string(),
-  target_keyword: z.string(),
+  errorType: z.enum(['content', 'technical', 'api', 'validation']),
+  errorMessage: z.string(),
+  context: z.object({
+    pageId: z.string().optional(),
+    agentType: z.enum([
+      'market_research',
+      'site_architect',
+      'internal_linker',
+      'elementor_builder',
+      'content_builder',
+      'page_builder',
+      'fixer',
+      'technical_seo',
+      'monitor',
+      'optimizer',
+      'publisher',
+    ]).optional(),
+    failedInput: z.unknown().optional(),
+    failedOutput: z.unknown().optional(),
+  }),
+  previousAttempts: z.number().optional(),
 });
 
 const outputSchema = z.object({
-  diagnosis: z.string(),
-  fixes_applied: z.array(z.object({
-    issue: z.string(),
-    fix: z.string(),
-    location: z.string(),
+  fixed: z.boolean(),
+  changes: z.array(z.object({
+    type: z.string(),
+    description: z.string(),
+    appliedFix: z.string(),
   })),
-  fixed_content: z.string(),
-  fixed_meta_title: z.string().optional(),
-  fixed_meta_description: z.string().optional(),
-  additional_recommendations: z.array(z.string()),
+  newContent: z.string().optional(),
+  recommendations: z.array(z.string()),
+  requiresManualReview: z.boolean(),
 });
 
-const SYSTEM_PROMPT = `You are an expert SEO troubleshooter specializing in diagnosing and fixing content and SEO issues.
+const SYSTEM_PROMPT = `You are an expert error diagnosis and recovery specialist for AI-powered SEO systems.
 
-Your role is to analyze problems, identify root causes, and apply fixes while maintaining content quality.
+Your role is to analyze errors, identify root causes, and implement automated fixes when possible.
 
-IMPORTANT RULES:
-1. Always respond with valid JSON only
-2. Diagnose the root cause before fixing
-3. Make minimal changes to fix issues
-4. Maintain content quality and readability
+ERROR TYPES YOU HANDLE:
+1. Content errors (malformed, incomplete, or invalid content)
+2. Technical errors (API failures, timeouts, rate limits)
+3. API errors (integration failures, authentication issues)
+4. Validation errors (schema violations, data format issues)
+
+CRITICAL RULES:
+1. Output ONLY valid JSON - no markdown, no explanations
+2. Diagnose the root cause accurately
+3. Provide actionable fixes when possible
+4. Flag issues requiring manual review
 5. Document all changes made
-6. Provide additional preventive recommendations
+6. Consider retry strategies for transient errors
+7. Preserve original intent when fixing content
+8. Suggest preventive measures
 
-COMMON ISSUES:
-- Missing or poor keyword optimization
-- Thin or duplicate content
-- Poor heading structure
-- Missing internal/external links
-- Low readability scores
-- Missing schema markup
-- Poor meta titles/descriptions
+Fix Priority:
+- Critical: System-blocking errors (fix immediately)
+- High: Content quality issues (fix with caution)
+- Medium: Optimization opportunities (suggest improvements)
+- Low: Minor formatting issues (fix automatically)
 
-Your output MUST be a valid JSON object matching this structure:
+Output JSON structure:
 {
-  "diagnosis": "Root cause analysis of the issue",
-  "fixes_applied": [
+  "fixed": true,
+  "changes": [
     {
-      "issue": "what was wrong",
-      "fix": "what was changed",
-      "location": "where in the content"
+      "type": "content_repair",
+      "description": "Fixed malformed JSON in content",
+      "appliedFix": "Escaped special characters"
     }
   ],
-  "fixed_content": "Complete fixed content",
-  "fixed_meta_title": "Updated meta title if needed",
-  "fixed_meta_description": "Updated meta description if needed",
-  "additional_recommendations": ["recommendation 1", "recommendation 2"]
+  "newContent": "fixed content if applicable",
+  "recommendations": [
+    "Add validation before content generation",
+    "Implement rate limiting"
+  ],
+  "requiresManualReview": false
 }`;
 
 export class FixerAgent extends BaseAgent<FixerInput, FixerOutput> {
@@ -85,34 +87,61 @@ export class FixerAgent extends BaseAgent<FixerInput, FixerOutput> {
     super({
       type: 'fixer',
       name: 'Fixer Agent',
-      description: 'Diagnoses and fixes content and SEO issues',
+      description: 'Diagnoses and fixes errors in automated workflows',
       systemPrompt: SYSTEM_PROMPT,
       inputSchema,
       outputSchema,
-      maxTokens: 8192,
-      temperature: 0.4,
+      maxTokens: 1000,
+      temperature: 0.3,
     });
   }
 
   protected buildUserPrompt(input: FixerInput): string {
-    return `Diagnose and fix the following issue:
+    let prompt = `Analyze and fix the following error:
 
-ERROR TYPE: ${input.error_type}
-ERROR DESCRIPTION: ${input.error_description}
+ERROR TYPE: ${input.errorType}
+ERROR MESSAGE: ${input.errorMessage}`;
 
-PAGE SLUG: ${input.page_slug}
-TARGET KEYWORD: ${input.target_keyword}
+    if (input.previousAttempts) {
+      prompt += `\nPREVIOUS ATTEMPTS: ${input.previousAttempts}`;
+    }
 
-CURRENT CONTENT:
-${input.current_content}
+    if (input.context.agentType) {
+      prompt += `\nFAILED AGENT: ${input.context.agentType}`;
+    }
 
-Please:
-1. Diagnose the root cause
-2. Apply necessary fixes
-3. Return the fixed content
-4. Provide recommendations to prevent future issues
+    if (input.context.pageId) {
+      prompt += `\nAFFECTED PAGE: ${input.context.pageId}`;
+    }
+
+    if (input.context.failedInput) {
+      prompt += `\n\nFAILED INPUT:\n${JSON.stringify(input.context.failedInput, null, 2)}`;
+    }
+
+    if (input.context.failedOutput) {
+      prompt += `\n\nFAILED OUTPUT:\n${JSON.stringify(input.context.failedOutput, null, 2)}`;
+    }
+
+    prompt += `
+
+Instructions:
+1. Diagnose the root cause of the error
+2. Determine if the error is fixable automatically
+3. If fixable, provide the corrected version
+4. Document all changes made
+5. Provide recommendations to prevent similar errors
+6. Flag if manual review is needed
+
+Consider:
+- Is this a transient error that should be retried?
+- Is the input data valid?
+- Is the error caused by external dependencies?
+- Can the error be prevented with better validation?
+- What's the impact of this error on the overall workflow?
 
 Respond with JSON only.`;
+
+    return prompt;
   }
 }
 

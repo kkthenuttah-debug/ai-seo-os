@@ -8,19 +8,19 @@ const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
 // Model routing based on agent type
 const MODEL_ROUTING: Record<AgentType, string> = {
   // Strategy agents - use advanced reasoning model
-  market_research: 'gemini-2.0-flash',
-  site_architect: 'gemini-2.0-flash',
-  optimizer: 'gemini-2.0-flash',
-  monitor: 'gemini-2.0-flash',
+  market_research: 'gemini-2.0-flash-exp',
+  site_architect: 'gemini-2.0-flash-exp',
+  optimizer: 'gemini-2.0-flash-exp',
+  technical_seo: 'gemini-2.0-flash-exp',
+  content_builder: 'gemini-2.0-flash-exp',
 
   // Execution agents - use fast model
-  content_builder: 'gemini-2.0-flash',
-  elementor_builder: 'gemini-2.0-flash',
-  page_builder: 'gemini-2.0-flash',
-  internal_linker: 'gemini-2.0-flash',
-  publisher: 'gemini-2.0-flash',
-  fixer: 'gemini-2.0-flash',
-  technical_seo: 'gemini-2.0-flash',
+  monitor: 'gemini-2.0-flash-lite',
+  elementor_builder: 'gemini-2.0-flash-lite',
+  page_builder: 'gemini-2.0-flash-lite',
+  internal_linker: 'gemini-2.0-flash-lite',
+  publisher: 'gemini-2.0-flash-lite',
+  fixer: 'gemini-2.0-flash-lite',
 };
 
 const DEFAULT_GENERATION_CONFIG: GenerationConfig = {
