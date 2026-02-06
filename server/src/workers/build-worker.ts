@@ -1,5 +1,5 @@
 import { Worker, Job } from 'bullmq';
-import { redis } from '../lib/redis.js';
+import { getWorkerOptions } from '../queues/config.js';
 import { logger } from '../lib/logger.js';
 import { createOrchestrator } from '../services/orchestrator.js';
 import { supabaseAdmin, getProjectById, getPagesByProjectId } from '../lib/supabase.js';
@@ -83,14 +83,7 @@ async function processBuildJob(job: Job<BuildJob>) {
 }
 
 export function startBuildWorker() {
-  const worker = new Worker<BuildJob>('build', processBuildJob, {
-    connection: redis,
-    concurrency: 2,
-    limiter: {
-      max: 10,
-      duration: 60000, // 10 jobs per minute
-    },
-  });
+  const worker = new Worker<BuildJob>('build', processBuildJob, getWorkerOptions('build'));
 
   worker.on('completed', (job) => {
     log.info({ jobId: job.id }, 'Build worker: job completed');

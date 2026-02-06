@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { authenticate, verifyProjectOwnership } from "../middleware/auth.js";
-import { scheduleAutomationLoop } from "../queue/index.js";
+import { startAutomationLoop } from "../services/jobOrchestrator.js";
 import { AuthError, NotFoundError } from "../utils/errors.js";
 
 const createProjectSchema = z.object({
@@ -149,12 +149,7 @@ export async function projectsRoutes(app: FastifyInstance) {
     async (request) => {
       const { projectId } = request.params as { projectId: string };
 
-      await supabaseAdmin
-        .from("projects")
-        .update({ status: "configuring" })
-        .eq("id", projectId);
-
-      await scheduleAutomationLoop(projectId);
+      await startAutomationLoop(projectId);
 
       return { success: true };
     },

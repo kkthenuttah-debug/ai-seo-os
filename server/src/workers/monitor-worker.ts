@@ -1,8 +1,8 @@
 import { Worker, Job } from 'bullmq';
-import { redis } from '../lib/redis.js';
+import { getWorkerOptions } from '../queues/config.js';
 import { logger } from '../lib/logger.js';
 import { createOrchestrator } from '../services/orchestrator.js';
-import { scheduleMonitorJob } from '../queue/index.js';
+import { scheduleMonitorJob } from '../queues/index.js';
 import type { MonitorJob } from '../types/index.js';
 
 const log = logger.child({ worker: 'monitor' });
@@ -45,14 +45,7 @@ async function processMonitorJob(job: Job<MonitorJob>) {
 }
 
 export function startMonitorWorker() {
-  const worker = new Worker<MonitorJob>('monitor', processMonitorJob, {
-    connection: redis,
-    concurrency: 3,
-    limiter: {
-      max: 20,
-      duration: 60000,
-    },
-  });
+  const worker = new Worker<MonitorJob>('monitor', processMonitorJob, getWorkerOptions('monitor'));
 
   worker.on('completed', (job) => {
     log.info({ jobId: job.id }, 'Monitor worker: job completed');
