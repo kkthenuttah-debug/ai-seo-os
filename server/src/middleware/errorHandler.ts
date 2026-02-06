@@ -2,6 +2,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { AppError, ValidationError } from '../utils/errors.js';
 import { logger } from '../lib/logger.js';
 import { ZodError } from 'zod';
+import { errorTracker } from '../services/errorTracking.js';
 
 interface ErrorResponse {
   code: string;
@@ -16,7 +17,7 @@ export function errorHandler(
   request: FastifyRequest,
   reply: FastifyReply
 ) {
-  const correlationId = request.id;
+  const correlationId = request.correlationId || request.id;
 
   let statusCode = 500;
   let code = 'INTERNAL_SERVER_ERROR';
@@ -46,6 +47,21 @@ export function errorHandler(
     method: request.method,
     url: request.url,
   }, `[${request.method} ${request.url}] Error occurred`);
+
+  // Track error in error tracking service (excluding 404s and validation errors)
+  if (statusCode >= 500 && !(error instanceof ValidationError)) {
+    try {
+      const projectId = (request.params as { projectId?: string })?.projectId;
+      errorTracker.trackError(error, {
+        route: request.url,
+        method: request.method,
+        projectId,
+        correlationId,
+      });
+    } catch (trackError) {
+      console.error('Failed to track error:', trackError);
+    }
+  }
 
   const response: ErrorResponse = {
     code,
