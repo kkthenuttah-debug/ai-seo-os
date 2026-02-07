@@ -59,6 +59,9 @@ interface Lead {
   location?: string;
   utmSource?: string;
   utmMedium?: string;
+  utmCampaign?: string;
+  conversionValue?: number;
+  notes?: string;
 }
 
 function mapLead(l: LeadFromApi): Lead {

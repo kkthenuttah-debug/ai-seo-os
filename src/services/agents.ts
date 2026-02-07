@@ -67,6 +67,28 @@ export interface MonitorRunsListResponse {
   offset: number;
 }
 
+export interface AgentInfo {
+  type: string;
+  name: string;
+  description: string;
+  category: 'strategy' | 'execution';
+  version: string;
+  dependencies: string[];
+}
+
+export interface AgentsListResponse {
+  agents: AgentInfo[];
+}
+
+export interface RunAgentResponse {
+  success: boolean;
+  runId: string;
+  jobId: string;
+  correlationId: string;
+  status: string;
+  message: string;
+}
+
 export const agentsService = {
   listRuns: (projectId: string, params?: { limit?: number; offset?: number; status?: string }) => {
     const q = new URLSearchParams();
@@ -91,4 +113,10 @@ export const agentsService = {
     api.get<AgentStatsResponse>(`/projects/${projectId}/agent-runs/stats`),
   retryFailed: (projectId: string) =>
     api.post<{ success: boolean; message: string }>(`/projects/${projectId}/agent-runs/retry-failed`),
+  // List all available agents with metadata
+  list: (projectId: string) =>
+    api.get<AgentsListResponse>(`/projects/${projectId}/agents`),
+  // Run an agent manually
+  run: (projectId: string, agentType: string, input: Record<string, unknown>) =>
+    api.post<RunAgentResponse>(`/projects/${projectId}/agents/run`, { agentType, input }),
 };

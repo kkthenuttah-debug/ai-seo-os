@@ -3,9 +3,11 @@ import { z } from 'zod';
 import { supabaseAdmin } from '../lib/supabase.js';
 import { authenticate, verifyProjectOwnership } from '../middleware/auth.js';
 import { AppError, NotFoundError, ValidationError } from '../utils/errors.js';
-import { agentTaskQueue } from '../queues/index.js';
+import { agentTaskQueue, scheduleAgentTask } from '../queues/index.js';
 import { logger } from '../lib/logger.js';
 import { retryFailedTasks } from '../services/jobOrchestrator.js';
+import { agentRegistry } from '../agents/registry.js';
+import type { AgentType } from '../types/index.js';
 
 const log = logger.child({ service: 'agentRoutes' });
 
@@ -423,6 +425,118 @@ export async function agentsRoutes(app: FastifyInstance) {
             ? result.reduce((sum, r) => sum + r.successCount, 0) / (runs || []).length 
             : 0,
         },
+      };
+    }
+  );
+
+  // POST /projects/:projectId/agents/run - Run an agent manually
+  const runAgentSchema = z.object({
+    agentType: z.enum([
+      'market_research',
+      'site_architect',
+      'internal_linker',
+      'elementor_builder',
+      'content_builder',
+      'page_builder',
+      'fixer',
+      'technical_seo',
+      'monitor',
+      'optimizer',
+      'publisher',
+    ]),
+    input: z.record(z.unknown()),
+  });
+
+  app.post(
+    '/projects/:projectId/agents/run',
+    { preHandler: [verifyProjectOwnership] },
+    async (request, reply) => {
+      const { projectId } = request.params as { projectId: string };
+      const { agentType, input } = runAgentSchema.parse(request.body);
+
+      // Validate agent type exists
+      if (!agentRegistry.hasAgent(agentType)) {
+        throw new ValidationError(`Unknown agent type: ${agentType}`);
+      }
+
+      // Create agent run record
+      const { data: run, error: insertError } = await supabaseAdmin
+        .from('agent_runs')
+        .insert({
+          project_id: projectId,
+          agent_type: agentType,
+          status: 'pending',
+          input: input,
+          output: {},
+          error_message: null,
+          model_used: null,
+          tokens_used: 0,
+          duration_ms: null,
+          retry_count: 0,
+        })
+        .select()
+        .single();
+
+      if (insertError) {
+        throw new AppError(insertError.message ?? 'Failed to create agent run', 503, 'SERVICE_UNAVAILABLE');
+      }
+
+      // Schedule agent task
+      const correlationId = `manual-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      try {
+        const job = await scheduleAgentTask({
+          project_id: projectId,
+          agent_type: agentType as AgentType,
+          input: input,
+          correlation_id: correlationId,
+        });
+
+        log.info({
+          runId: run.id,
+          jobId: job.id,
+          projectId,
+          agentType,
+          correlationId,
+        }, 'Agent run scheduled manually');
+
+        return reply.status(202).send({
+          success: true,
+          runId: run.id,
+          jobId: job.id,
+          correlationId,
+          status: 'pending',
+          message: `Agent ${agentType} scheduled successfully`,
+        });
+      } catch (queueError) {
+        // Update run status to failed
+        await supabaseAdmin
+          .from('agent_runs')
+          .update({
+            status: 'failed',
+            error_message: 'Failed to queue agent task',
+          })
+          .eq('id', run.id);
+
+        throw new ValidationError('Failed to queue agent task');
+      }
+    }
+  );
+
+  // GET /projects/:projectId/agents - List all available agents with metadata
+  app.get(
+    '/projects/:projectId/agents',
+    { preHandler: [verifyProjectOwnership] },
+    async () => {
+      const agents = agentRegistry.listAgents();
+      return {
+        agents: agents.map(agent => ({
+          type: agent.type,
+          name: agent.name,
+          description: agent.description,
+          category: agent.category,
+          version: agent.version,
+          dependencies: agentRegistry.getAgentDependencies(agent.type),
+        })),
       };
     }
   );

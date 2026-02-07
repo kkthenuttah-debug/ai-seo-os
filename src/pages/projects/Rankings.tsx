@@ -5,28 +5,36 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { 
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuSeparator
 } from "@/components/ui/dropdown-menu";
-import { 
+import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription
 } from "@/components/ui/dialog";
-import { 
-  LineChart, 
-  Line, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer 
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  AreaChart,
+  Area,
 } from "recharts";
 import {
   Search,
@@ -42,10 +50,14 @@ import {
   BarChart3,
   Calendar,
   RefreshCw,
-  MoreVertical
+  MoreVertical,
+  Zap,
+  Sparkles,
+  AlertCircle,
+  Loader2,
 } from "lucide-react";
-import { rankingsService, type RankingFromApi } from "@/services/rankings";
-import { formatDistanceToNow } from "date-fns";
+import { rankingsService, type RankingFromApi, type RankingHistoryItem, type RankingsInsightsResponse } from "@/services/rankings";
+import { formatDistanceToNow, format } from "date-fns";
 import { useNotification } from "@/hooks/useNotification";
 
 interface Ranking {
@@ -61,41 +73,60 @@ interface Ranking {
   ctr: number;
   url: string;
   lastUpdated: string;
+  previousPosition?: number;
 }
 
 function mapRanking(r: RankingFromApi): Ranking {
+  const positionChange = r.position_change ?? 0;
   return {
     id: r.id,
     keyword: r.keyword,
     position: r.position,
-    change7d: 0,
+    change7d: positionChange,
     change30d: 0,
     searchVolume: r.search_volume ?? 0,
     difficulty: r.difficulty ?? 0,
-    clicks: 0,
-    impressions: 0,
-    ctr: 0,
+    clicks: r.clicks ?? 0,
+    impressions: r.impressions ?? 0,
+    ctr: r.ctr ?? 0,
     url: r.url ?? "",
     lastUpdated: formatDistanceToNow(new Date(r.tracked_at), { addSuffix: true }),
+    previousPosition: r.previous_position,
   };
 }
-
-const trendData: { date: string; position: number }[] = [];
 
 export default function Rankings() {
   const { projectId } = useParams<{ projectId: string }>();
   const [rankings, setRankings] = useState<Ranking[]>([]);
   const [loading, setLoading] = useState(true);
-  const { showError } = useNotification();
+  const { showError, notifySuccess } = useNotification();
+
+  // Sync state
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+
+  // Insights state
+  const [insights, setInsights] = useState<RankingsInsightsResponse | null>(null);
+
+  // Trend chart state
+  const [trendData, setTrendData] = useState<RankingHistoryItem[]>([]);
+  const [loadingTrend, setLoadingTrend] = useState(false);
 
   useEffect(() => {
     if (!projectId) return;
     let cancelled = false;
     setLoading(true);
-    rankingsService
-      .list(projectId, { limit: 100 })
-      .then((res) => {
-        if (!cancelled) setRankings(res.rankings.map(mapRanking));
+    Promise.all([
+      rankingsService.list(projectId, { limit: 100 }),
+      rankingsService.insights(projectId).catch(() => null),
+    ])
+      .then(([rankingsRes, insightsRes]) => {
+        if (!cancelled) {
+          setRankings(rankingsRes.rankings.map(mapRanking));
+          if (insightsRes) {
+            setInsights(insightsRes);
+          }
+        }
       })
       .catch((err) => {
         if (!cancelled) showError(err instanceof Error ? err.message : "Failed to load rankings");
@@ -103,19 +134,20 @@ export default function Rankings() {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    return () => { cancelled = true; };
+    return () => { cancelled = true };
   }, [projectId, showError]);
+
   const [searchTerm, setSearchTerm] = useState("");
   const [positionFilter, setPositionFilter] = useState<string>("all");
   const [sortBy, setSortBy] = useState<string>("position-asc");
   const [selectedRankings, setSelectedRankings] = useState<Set<string>>(new Set());
-  const [selectedKeyword, setSelectedKeyword] = useState<string | null>(null);
+  const [selectedKeyword, setSelectedKeyword] = useState<Ranking | null>(null);
   const [showTrendModal, setShowTrendModal] = useState(false);
 
   const filteredRankings = rankings
     .filter(ranking => {
       const matchesSearch = ranking.keyword.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesPosition = positionFilter === "all" || 
+      const matchesPosition = positionFilter === "all" ||
         (positionFilter === "top3" && ranking.position <= 3) ||
         (positionFilter === "top10" && ranking.position <= 10) ||
         (positionFilter === "top20" && ranking.position <= 20) ||
@@ -181,13 +213,78 @@ export default function Rankings() {
   };
 
   const handleExport = () => {
-    // Handle CSV export
-    console.log("Exporting rankings:", Array.from(selectedRankings));
+    const dataToExport = selectedRankings.size > 0
+      ? rankings.filter(r => selectedRankings.has(r.id))
+      : rankings;
+
+    const csv = [
+      ["Keyword", "Position", "Change (7d)", "Volume", "Difficulty", "Clicks", "Impressions", "CTR", "URL"].join(","),
+      ...dataToExport.map(r => [
+        `"${r.keyword}"`,
+        r.position,
+        r.change7d,
+        r.searchVolume,
+        r.difficulty,
+        r.clicks,
+        r.impressions,
+        `${r.ctr.toFixed(1)}%`,
+        `"${r.url}"`,
+      ].join(",")),
+    ].join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `rankings-${format(new Date(), "yyyy-MM-dd")}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+
+    notifySuccess(`Exported ${dataToExport.length} rankings to CSV`);
   };
 
-  const showTrendChart = (keyword: string) => {
-    setSelectedKeyword(keyword);
+  const handleSync = async () => {
+    if (!projectId || isSyncing) return;
+    setIsSyncing(true);
+    try {
+      const result = await rankingsService.sync(projectId);
+      setLastSyncedAt(result.syncedAt);
+      notifySuccess(`Synced ${result.snapshotCount} snapshots from GSC`);
+
+      // Refresh data
+      const [rankingsRes, insightsRes] = await Promise.all([
+        rankingsService.list(projectId, { limit: 100 }),
+        rankingsService.insights(projectId).catch(() => null),
+      ]);
+      setRankings(rankingsRes.rankings.map(mapRanking));
+      if (insightsRes) {
+        setInsights(insightsRes);
+      }
+    } catch (err) {
+      showError(err instanceof Error ? err.message : "Failed to sync rankings");
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const showTrendChart = async (ranking: Ranking) => {
+    setSelectedKeyword(ranking);
     setShowTrendModal(true);
+    setLoadingTrend(true);
+    setTrendData([]);
+
+    if (projectId) {
+      try {
+        const history = await rankingsService.history(projectId, ranking.id);
+        setTrendData(history.history);
+      } catch (err) {
+        showError(err instanceof Error ? err.message : "Failed to load trend data");
+      } finally {
+        setLoadingTrend(false);
+      }
+    }
   };
 
   const getInsights = () => {
@@ -196,11 +293,11 @@ export default function Rankings() {
     const top20 = rankings.filter(r => r.position <= 20).length;
     const improving = rankings.filter(r => r.change7d > 0).length;
     const declining = rankings.filter(r => r.change7d < 0).length;
-    
+
     return { top3, top10, top20, improving, declining };
   };
 
-  const insights = getInsights();
+  const calculatedInsights = getInsights();
 
   return (
     <div className="space-y-6">
@@ -210,14 +307,28 @@ export default function Rankings() {
           <h1 className="text-2xl font-semibold">Rankings Tracker</h1>
           <p className="text-sm text-muted-foreground">
             Monitor keyword positions and track ranking changes over time
+            {lastSyncedAt && (
+              <span className="ml-2 text-xs">
+                (Last synced: {formatDistanceToNow(new Date(lastSyncedAt), { addSuffix: true })})
+              </span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" className="gap-2">
-            <RefreshCw className="h-4 w-4" />
-            Sync Data
+          <Button
+            variant="outline"
+            className="gap-2"
+            onClick={handleSync}
+            disabled={isSyncing}
+          >
+            {isSyncing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            {isSyncing ? "Syncing..." : "Sync Data"}
           </Button>
-          <Button variant="outline" className="gap-2">
+          <Button variant="outline" className="gap-2" onClick={handleExport}>
             <Download className="h-4 w-4" />
             Export CSV
           </Button>
@@ -232,7 +343,7 @@ export default function Rankings() {
               <Target className="h-4 w-4 text-green-600" />
               <span className="text-sm font-medium">Top 3</span>
             </div>
-            <div className="text-2xl font-semibold">{insights.top3}</div>
+            <div className="text-2xl font-semibold">{calculatedInsights.top3}</div>
             <div className="text-xs text-muted-foreground">keywords ranking</div>
           </CardContent>
         </Card>
@@ -242,7 +353,7 @@ export default function Rankings() {
               <BarChart3 className="h-4 w-4 text-blue-600" />
               <span className="text-sm font-medium">Top 10</span>
             </div>
-            <div className="text-2xl font-semibold">{insights.top10}</div>
+            <div className="text-2xl font-semibold">{calculatedInsights.top10}</div>
             <div className="text-xs text-muted-foreground">keywords ranking</div>
           </CardContent>
         </Card>
@@ -252,7 +363,7 @@ export default function Rankings() {
               <Eye className="h-4 w-4 text-yellow-600" />
               <span className="text-sm font-medium">Top 20</span>
             </div>
-            <div className="text-2xl font-semibold">{insights.top20}</div>
+            <div className="text-2xl font-semibold">{calculatedInsights.top20}</div>
             <div className="text-xs text-muted-foreground">keywords ranking</div>
           </CardContent>
         </Card>
@@ -262,7 +373,7 @@ export default function Rankings() {
               <TrendingUp className="h-4 w-4 text-green-600" />
               <span className="text-sm font-medium">Improving</span>
             </div>
-            <div className="text-2xl font-semibold text-green-600">{insights.improving}</div>
+            <div className="text-2xl font-semibold text-green-600">{calculatedInsights.improving}</div>
             <div className="text-xs text-muted-foreground">this week</div>
           </CardContent>
         </Card>
@@ -272,11 +383,125 @@ export default function Rankings() {
               <TrendingDown className="h-4 w-4 text-red-600" />
               <span className="text-sm font-medium">Declining</span>
             </div>
-            <div className="text-2xl font-semibold text-red-600">{insights.declining}</div>
+            <div className="text-2xl font-semibold text-red-600">{calculatedInsights.declining}</div>
             <div className="text-xs text-muted-foreground">this week</div>
           </CardContent>
         </Card>
       </div>
+
+      {/* Insights Tabs */}
+      {insights && (
+        <Tabs defaultValue="gaining" className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="gaining" className="gap-1">
+              <TrendingUp className="h-3 w-3" />
+              Gaining ({insights.summary.totalGaining})
+            </TabsTrigger>
+            <TabsTrigger value="losing" className="gap-1">
+              <TrendingDown className="h-3 w-3" />
+              Losing ({insights.summary.totalLosing})
+            </TabsTrigger>
+            <TabsTrigger value="opportunities" className="gap-1">
+              <Zap className="h-3 w-3" />
+              Opportunities ({insights.summary.totalOpportunities})
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="gaining">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <TrendingUp className="h-4 w-4 text-green-600" />
+                  Top Gainers
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {insights.gaining.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No keywords gaining positions</p>
+                ) : (
+                  <div className="space-y-2">
+                    {insights.gaining.slice(0, 5).map((item, i) => (
+                      <div key={i} className="flex items-center justify-between py-2 border-b last:border-0">
+                        <span className="text-sm font-medium">{item.keyword}</span>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline">#{item.position}</Badge>
+                          <span className="text-sm text-green-600 flex items-center gap-1">
+                            <ArrowUp className="h-3 w-3" />
+                            {Math.abs(item.change || 0)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="losing">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <TrendingDown className="h-4 w-4 text-red-600" />
+                  Top Losers
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {insights.losing.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No keywords losing positions</p>
+                ) : (
+                  <div className="space-y-2">
+                    {insights.losing.slice(0, 5).map((item, i) => (
+                      <div key={i} className="flex items-center justify-between py-2 border-b last:border-0">
+                        <span className="text-sm font-medium">{item.keyword}</span>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline">#{item.position}</Badge>
+                          <span className="text-sm text-red-600 flex items-center gap-1">
+                            <ArrowDown className="h-3 w-3" />
+                            {Math.abs(item.change || 0)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="opportunities">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-purple-600" />
+                  Keyword Opportunities
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {insights.opportunities.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No opportunities found</p>
+                ) : (
+                  <div className="space-y-2">
+                    {insights.opportunities.slice(0, 5).map((item, i) => (
+                      <div key={i} className="flex items-center justify-between py-2 border-b last:border-0">
+                        <div>
+                          <span className="text-sm font-medium">{item.keyword}</span>
+                          <p className="text-xs text-muted-foreground">
+                            Position #{item.position} · Vol: {item.volume?.toLocaleString()}
+                          </p>
+                        </div>
+                        <Badge variant="secondary">
+                          +{item.potentialTraffic} potential clicks
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      )}
 
       {/* Toolbar */}
       <Card>
@@ -403,7 +628,7 @@ export default function Rankings() {
                 ) : filteredRankings.length === 0 ? (
                   <tr>
                     <td colSpan={11} className="p-8 text-center text-muted-foreground">
-                      No rankings yet. Sync with Google Search Console to populate.
+                      No rankings yet. <Button variant="link" onClick={handleSync} className="p-0 h-auto">Sync with Google Search Console</Button> to populate.
                     </td>
                   </tr>
                 ) : (
@@ -412,7 +637,7 @@ export default function Rankings() {
                     <td className="p-4">
                       <Checkbox
                         checked={selectedRankings.has(ranking.id)}
-                        onCheckedChange={(checked) => 
+                        onCheckedChange={(checked) =>
                           handleSelectRanking(ranking.id, checked as boolean)
                         }
                       />
@@ -420,7 +645,7 @@ export default function Rankings() {
                     <td className="p-4">
                       <div className="space-y-1">
                         <div className="font-medium">{ranking.keyword}</div>
-                        <div className="text-sm text-muted-foreground">
+                        <div className="text-sm text-muted-foreground truncate max-w-[200px]">
                           {ranking.url}
                         </div>
                       </div>
@@ -432,8 +657,8 @@ export default function Rankings() {
                         </Badge>
                         {getPositionColor(ranking.position) && (
                           <span className={`text-xs ${getPositionColor(ranking.position)}`}>
-                            {ranking.position <= 3 ? 'Excellent' : 
-                             ranking.position <= 10 ? 'Good' : 
+                            {ranking.position <= 3 ? 'Excellent' :
+                             ranking.position <= 10 ? 'Good' :
                              ranking.position <= 20 ? 'Fair' : 'Poor'}
                           </span>
                         )}
@@ -484,13 +709,15 @@ export default function Rankings() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => showTrendChart(ranking.keyword)}>
+                          <DropdownMenuItem onClick={() => showTrendChart(ranking)}>
                             <BarChart3 className="h-4 w-4 mr-2" />
                             View Trend
                           </DropdownMenuItem>
-                          <DropdownMenuItem>
-                            <Eye className="h-4 w-4 mr-2" />
-                            View Page
+                          <DropdownMenuItem asChild>
+                            <a href={ranking.url} target="_blank" rel="noopener noreferrer">
+                              <Eye className="h-4 w-4 mr-2" />
+                              View Page
+                            </a>
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -508,44 +735,128 @@ export default function Rankings() {
       <Dialog open={showTrendModal} onOpenChange={setShowTrendModal}>
         <DialogContent className="max-w-4xl">
           <DialogHeader>
-            <DialogTitle>Keyword Trend: {selectedKeyword}</DialogTitle>
+            <DialogTitle>Keyword Trend: {selectedKeyword?.keyword}</DialogTitle>
             <DialogDescription>
-              Position changes over the last 90 days
+              Position and performance changes over time
             </DialogDescription>
           </DialogHeader>
-          <div className="h-[400px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={trendData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-                <XAxis 
-                  dataKey="date" 
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fontSize: 12 }}
-                />
-                <YAxis 
-                  domain={[1, 50]}
-                  reversed
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fontSize: 12 }}
-                  tickFormatter={(value) => `#${value}`}
-                />
-                <Tooltip 
-                  formatter={(value) => [`Position #${value}`, 'Ranking']}
-                  labelFormatter={(label) => `Date: ${label}`}
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="position" 
-                  stroke="#3b82f6" 
-                  strokeWidth={3}
-                  dot={{ fill: "#3b82f6", strokeWidth: 2, r: 4 }}
-                  activeDot={{ r: 6, stroke: "#3b82f6", strokeWidth: 2 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+
+          {loadingTrend ? (
+            <div className="h-[400px] flex items-center justify-center">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : trendData.length === 0 ? (
+            <div className="h-[400px] flex flex-col items-center justify-center text-muted-foreground">
+              <AlertCircle className="h-12 w-12 mb-4 opacity-50" />
+              <p>No historical data available for this keyword</p>
+              <p className="text-sm">Sync with GSC to collect trend data</p>
+            </div>
+          ) : (
+            <Tabs defaultValue="position" className="space-y-4">
+              <TabsList>
+                <TabsTrigger value="position">Position</TabsTrigger>
+                <TabsTrigger value="clicks">Clicks</TabsTrigger>
+                <TabsTrigger value="impressions">Impressions</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="position" className="h-[400px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={trendData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                    <XAxis
+                      dataKey="date"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fontSize: 12 }}
+                      tickFormatter={(value) => format(new Date(value), "MMM d")}
+                    />
+                    <YAxis
+                      domain={[1, 50]}
+                      reversed
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fontSize: 12 }}
+                      tickFormatter={(value) => `#${value}`}
+                    />
+                    <Tooltip
+                      formatter={(value) => [`Position #${value}`, 'Ranking']}
+                      labelFormatter={(label) => format(new Date(label), "MMM d, yyyy")}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="position"
+                      stroke="#3b82f6"
+                      strokeWidth={3}
+                      dot={{ fill: "#3b82f6", strokeWidth: 2, r: 4 }}
+                      activeDot={{ r: 6, stroke: "#3b82f6", strokeWidth: 2 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </TabsContent>
+
+              <TabsContent value="clicks" className="h-[400px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={trendData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                    <XAxis
+                      dataKey="date"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fontSize: 12 }}
+                      tickFormatter={(value) => format(new Date(value), "MMM d")}
+                    />
+                    <YAxis
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fontSize: 12 }}
+                    />
+                    <Tooltip
+                      formatter={(value) => [value, 'Clicks']}
+                      labelFormatter={(label) => format(new Date(label), "MMM d, yyyy")}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="clicks"
+                      stroke="#10b981"
+                      fill="#10b981"
+                      fillOpacity={0.2}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </TabsContent>
+
+              <TabsContent value="impressions" className="h-[400px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={trendData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                    <XAxis
+                      dataKey="date"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fontSize: 12 }}
+                      tickFormatter={(value) => format(new Date(value), "MMM d")}
+                    />
+                    <YAxis
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fontSize: 12 }}
+                    />
+                    <Tooltip
+                      formatter={(value) => [typeof value === 'number' ? value.toLocaleString() : value, 'Impressions']}
+                      labelFormatter={(label) => format(new Date(label), "MMM d, yyyy")}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="impressions"
+                      stroke="#8b5cf6"
+                      fill="#8b5cf6"
+                      fillOpacity={0.2}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </TabsContent>
+            </Tabs>
+          )}
         </DialogContent>
       </Dialog>
     </div>

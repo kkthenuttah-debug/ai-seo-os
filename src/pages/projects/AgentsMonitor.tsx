@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AgentRunItem } from "@/components/AgentRunItem";
+import { AgentLauncher } from "@/components/AgentLauncher";
 import {
   Bot,
   Pause,
@@ -19,6 +20,7 @@ import {
   MoreVertical,
   ChevronDown,
   ChevronRight,
+  Play,
 } from "lucide-react";
 import { agentsService, type AgentRunFromApi, type MonitorRunFromApi } from "@/services/agents";
 import { projectsService } from "@/services/projects";
@@ -66,6 +68,7 @@ export default function AgentsMonitor() {
   const [publishingReady, setPublishingReady] = useState(false);
   const [openAgentCards, setOpenAgentCards] = useState<Record<string, boolean>>({});
   const [openMonitorRunId, setOpenMonitorRunId] = useState<string | null>(null);
+  const [showLauncher, setShowLauncher] = useState(false);
 
   const fetchData = () => {
     if (!projectId) return;
@@ -185,6 +188,13 @@ export default function AgentsMonitor() {
           >
             <Zap className="h-4 w-4" />
             {publishingReady ? "Scheduling…" : "Publish ready pages"}
+          </Button>
+          <Button
+            className="gap-2"
+            onClick={() => setShowLauncher(true)}
+          >
+            <Play className="h-4 w-4" />
+            Run Agent
           </Button>
         </div>
       </div>
@@ -469,14 +479,17 @@ export default function AgentsMonitor() {
                               <div>
                                 <h4 className="font-medium mb-2">Alerts</h4>
                                 <ul className="list-disc list-inside space-y-1">
-                                  {alerts.slice(0, 10).map((a: { type?: string; message?: string }, i: number) => (
-                                    <li key={i}>
-                                      <Badge variant={a.type === "critical" ? "destructive" : a.type === "warning" ? "secondary" : "outline"} className="mr-2">
-                                        {a.type ?? "info"}
-                                      </Badge>
-                                      {String(a.message ?? "—")}
-                                    </li>
-                                  ))}
+                                  {alerts.slice(0, 10).map((a, i) => {
+                                    const alert = a as { type?: string; message?: string };
+                                    return (
+                                      <li key={i}>
+                                        <Badge variant={alert.type === "critical" ? "destructive" : alert.type === "warning" ? "secondary" : "outline"} className="mr-2">
+                                          {alert.type ?? "info"}
+                                        </Badge>
+                                        {String(alert.message ?? "—")}
+                                      </li>
+                                    );
+                                  })}
                                   {alerts.length > 10 && <li className="text-muted-foreground">+{alerts.length - 10} more</li>}
                                 </ul>
                               </div>
@@ -485,11 +498,14 @@ export default function AgentsMonitor() {
                               <div>
                                 <h4 className="font-medium mb-2">Trends</h4>
                                 <ul className="list-disc list-inside space-y-1">
-                                  {trends.slice(0, 5).map((t: { metric?: string; direction?: string; changePercentage?: number; analysis?: string }, i: number) => (
-                                    <li key={i}>
-                                      {t.metric ?? "—"} {t.direction ?? ""} {t.changePercentage != null ? `${t.changePercentage}%` : ""} — {String(t.analysis ?? "").slice(0, 80)}
-                                    </li>
-                                  ))}
+                                  {trends.slice(0, 5).map((t, i) => {
+                                    const trend = t as { metric?: string; direction?: string; changePercentage?: number; analysis?: string };
+                                    return (
+                                      <li key={i}>
+                                        {trend.metric ?? "—"} {trend.direction ?? ""} {trend.changePercentage != null ? `${trend.changePercentage}%` : ""} — {String(trend.analysis ?? "").slice(0, 80)}
+                                      </li>
+                                    );
+                                  })}
                                   {trends.length > 5 && <li className="text-muted-foreground">+{trends.length - 5} more</li>}
                                 </ul>
                               </div>
@@ -498,12 +514,15 @@ export default function AgentsMonitor() {
                               <div>
                                 <h4 className="font-medium mb-2">Recommendations</h4>
                                 <ul className="list-disc list-inside space-y-1">
-                                  {recommendations.slice(0, 5).map((r: { suggestion?: string; priority?: string }, i: number) => (
-                                    <li key={i}>
-                                      <Badge variant="outline" className="mr-2">{r.priority ?? "—"}</Badge>
-                                      {String(r.suggestion ?? "—").slice(0, 120)}
-                                    </li>
-                                  ))}
+                                  {recommendations.slice(0, 5).map((r, i) => {
+                                    const rec = r as { suggestion?: string; priority?: string };
+                                    return (
+                                      <li key={i}>
+                                        <Badge variant="outline" className="mr-2">{rec.priority ?? "—"}</Badge>
+                                        {String(rec.suggestion ?? "—").slice(0, 120)}
+                                      </li>
+                                    );
+                                  })}
                                   {recommendations.length > 5 && <li className="text-muted-foreground">+{recommendations.length - 5} more</li>}
                                 </ul>
                               </div>
@@ -584,6 +603,13 @@ export default function AgentsMonitor() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Agent Launcher */}
+      <AgentLauncher
+        projectId={projectId || ""}
+        isOpen={showLauncher}
+        onClose={() => setShowLauncher(false)}
+      />
     </div>
   );
 }

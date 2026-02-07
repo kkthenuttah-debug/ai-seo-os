@@ -8,6 +8,7 @@ import { KeywordsChart } from "@/components/KeywordsChart";
 import { AgentRunItem } from "@/components/AgentRunItem";
 import { IntegrationCard } from "@/components/IntegrationCard";
 import { ProjectHeader } from "@/components/ProjectHeader";
+import { AgentLauncher } from "@/components/AgentLauncher";
 import {
   Play,
   Pause,
@@ -19,6 +20,8 @@ import {
   Target,
   Search,
   ExternalLink,
+  Bot,
+  Sparkles,
 } from "lucide-react";
 import { projectsService } from "@/services/projects";
 import { analyticsService } from "@/services/analytics";
@@ -70,6 +73,7 @@ export default function Overview() {
   const [keywords, setKeywords] = useState<Awaited<ReturnType<typeof analyticsService.keywords>> | null>(null);
   const [agentRuns, setAgentRuns] = useState<ReturnType<typeof mapRunToItem>[]>([]);
   const [integrations, setIntegrations] = useState<Array<{ name: string; connected: boolean; url?: string; lastSync?: string; status: string }>>([]);
+  const [showLauncher, setShowLauncher] = useState(false);
 
   useEffect(() => {
     if (!projectId) return;
@@ -352,6 +356,15 @@ export default function Overview() {
           <CardContent className="space-y-3">
             <div className="flex items-center justify-between">
               <div>
+                <p className="text-sm font-medium">Run Agent</p>
+                <p className="text-xs text-muted-foreground">Launch any of the 11 AI agents</p>
+              </div>
+              <Button size="sm" onClick={() => setShowLauncher(true)}>
+                <Bot className="h-3 w-3 mr-1" /> Launch
+              </Button>
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
                 <p className="text-sm font-medium">Automation Loop</p>
                 <p className="text-xs text-muted-foreground">{isAutomationActive ? "Running" : "Paused"}</p>
               </div>
@@ -384,6 +397,13 @@ export default function Overview() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Agent Launcher */}
+      <AgentLauncher
+        projectId={projectId || ""}
+        isOpen={showLauncher}
+        onClose={() => setShowLauncher(false)}
+      />
     </div>
   );
 }

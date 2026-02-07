@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { pagesService, type PageFromApi } from "@/services/pages";
 import { projectsService } from "@/services/projects";
+import { PageEditor } from "@/components/PageEditor";
 import { formatDistanceToNow } from "date-fns";
 import { useNotification } from "@/hooks/useNotification";
 
@@ -101,6 +102,11 @@ export default function Pages() {
   const pagesPerPage = 20;
   const [wordpressBaseUrl, setWordpressBaseUrl] = useState<string | null>(null);
   const { showError } = useNotification();
+
+  // Page Editor state
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [editingPage, setEditingPage] = useState<PageFromApi | null>(null);
+  const [editorMode, setEditorMode] = useState<"create" | "edit">("create");
 
   useEffect(() => {
     if (!projectId) return;
@@ -224,6 +230,50 @@ export default function Pages() {
     }
   };
 
+  const handleCreatePage = () => {
+    setEditingPage(null);
+    setEditorMode("create");
+    setIsEditorOpen(true);
+  };
+
+  const handleEditPage = (pageId: string) => {
+    const page = pages.find((p) => p.id === pageId);
+    if (page) {
+      const fullPage: PageFromApi = {
+        id: page.id,
+        title: page.title,
+        slug: page.slug,
+        status: page.status,
+        content: "", // Will be fetched when needed
+        meta_title: page.metaTitle,
+        meta_description: page.metaDescription,
+        meta_keywords: undefined,
+        published_at: page.publishedDate,
+        wordpress_post_id: page.wordpressId,
+        updated_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        elementor_data: undefined,
+      };
+      setEditingPage(fullPage);
+      setEditorMode("edit");
+      setIsEditorOpen(true);
+    }
+  };
+
+  const handlePageSaved = (savedPage: PageFromApi) => {
+    // Refresh the page list
+    if (projectId) {
+      pagesService
+        .list(projectId, { limit: 200, sort: "updated_at" })
+        .then((res) => {
+          setPages(res.pages.map(mapPage));
+        })
+        .catch((err) => {
+          showError(err instanceof Error ? err.message : "Failed to refresh pages");
+        });
+    }
+  };
+
   const getStatusBadge = (status: string) => {
     const classes = statusColors[status as keyof typeof statusColors];
     return (
@@ -251,7 +301,7 @@ export default function Pages() {
             Manage your published content and track performance
           </p>
         </div>
-        <Button className="gap-2">
+        <Button className="gap-2" onClick={handleCreatePage}>
           <Plus className="h-4 w-4" />
           Create Page
         </Button>
@@ -454,7 +504,7 @@ export default function Pages() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleEditPage(page.id)}>
                             <Edit className="h-4 w-4 mr-2" />
                             Edit
                           </DropdownMenuItem>
@@ -549,6 +599,16 @@ export default function Pages() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Page Editor */}
+      <PageEditor
+        projectId={projectId || ""}
+        page={editingPage}
+        isOpen={isEditorOpen}
+        onClose={() => setIsEditorOpen(false)}
+        onSave={handlePageSaved}
+        mode={editorMode}
+      />
     </div>
   );
 }
