@@ -4,7 +4,7 @@ import { getQueueOptions } from './config.js';
 import { agentTaskQueue, scheduleAgentTask, scheduleAgentTasks, getAgentTaskQueueStats } from './agentTaskQueue.js';
 import { webhookQueue, scheduleWebhook, scheduleWebhooks, getWebhookQueueStats } from './webhookQueue.js';
 import type { AgentTaskJob, WebhookJob } from '../types/queue.js';
-import type { BuildJob, PublishJob, MonitorJob, OptimizeJob } from '../types/index.js';
+import type { BuildJob, PublishJob, MonitorJob, OptimizeJob, IndexJob } from '../types/index.js';
 
 const log = logger.child({ component: 'queues' });
 
@@ -34,9 +34,10 @@ export {
   closeWebhookQueue,
 } from './webhookQueue.js';
 
-// Create additional queues (build, publish, monitor, optimize)
+// Create additional queues (build, publish, index, monitor, optimize)
 export const buildQueue = new Queue<BuildJob>('build', getQueueOptions('build'));
 export const publishQueue = new Queue<PublishJob>('publish', getQueueOptions('publish'));
+export const indexQueue = new Queue<IndexJob>('index', getQueueOptions('index'));
 export const monitorQueue = new Queue<MonitorJob>('monitor', getQueueOptions('monitor'));
 export const optimizeQueue = new Queue<OptimizeJob>('optimize', getQueueOptions('optimize'));
 
@@ -67,6 +68,7 @@ const setupQueueEvents = (queueName: string) => {
 export const agentTaskQueueEvents = setupQueueEvents('agent-tasks');
 export const buildQueueEvents = setupQueueEvents('build');
 export const publishQueueEvents = setupQueueEvents('publish');
+export const indexQueueEvents = setupQueueEvents('index');
 export const monitorQueueEvents = setupQueueEvents('monitor');
 export const optimizeQueueEvents = setupQueueEvents('optimize');
 export const webhookQueueEvents = setupQueueEvents('webhooks');
@@ -117,12 +119,20 @@ export async function scheduleOptimizeJob(data: Omit<OptimizeJob, 'correlation_i
   return job;
 }
 
+export async function scheduleIndexJob(data: Omit<IndexJob, 'type'>, options?: { delay?: number; priority?: number }) {
+  const jobData: IndexJob = { ...data, type: 'index' };
+  const job = await indexQueue.add('index', jobData, options);
+  log.info({ jobId: job.id, projectId: data.project_id }, 'Index job scheduled');
+  return job;
+}
+
 // Get all queue stats
 export async function getAllQueueStats() {
-  const [agentTasks, build, publish, monitor, optimize, webhooks] = await Promise.all([
+  const [agentTasks, build, publish, index, monitor, optimize, webhooks] = await Promise.all([
     getAgentTaskQueueStats(),
     buildQueue.getJobCounts(),
     publishQueue.getJobCounts(),
+    indexQueue.getJobCounts(),
     monitorQueue.getJobCounts(),
     optimizeQueue.getJobCounts(),
     getWebhookQueueStats(),
@@ -132,6 +142,7 @@ export async function getAllQueueStats() {
     'agent-tasks': agentTasks,
     build,
     publish,
+    index,
     monitor,
     optimize,
     webhooks,
@@ -172,6 +183,8 @@ export async function cleanAllQueues() {
     buildQueue.clean(7 * 24 * 60 * 60 * 1000, 500, 'failed'),
     publishQueue.clean(24 * 60 * 60 * 1000, 100, 'completed'),
     publishQueue.clean(7 * 24 * 60 * 60 * 1000, 500, 'failed'),
+    indexQueue.clean(24 * 60 * 60 * 1000, 100, 'completed'),
+    indexQueue.clean(7 * 24 * 60 * 60 * 1000, 500, 'failed'),
     monitorQueue.clean(24 * 60 * 60 * 1000, 100, 'completed'),
     monitorQueue.clean(7 * 24 * 60 * 60 * 1000, 500, 'failed'),
     optimizeQueue.clean(24 * 60 * 60 * 1000, 100, 'completed'),
@@ -223,6 +236,7 @@ export default {
   agentTaskQueue,
   buildQueue,
   publishQueue,
+  indexQueue,
   monitorQueue,
   optimizeQueue,
   webhookQueue,
@@ -230,6 +244,7 @@ export default {
   scheduleAgentTasks,
   scheduleBuildJob,
   schedulePublishJob,
+  scheduleIndexJob,
   scheduleMonitorJob,
   scheduleOptimizeJob,
   scheduleWebhook,

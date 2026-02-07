@@ -27,4 +27,6 @@ export const projectSettingsSchema = z.object({
   name: z.string().min(2),
   domain: z.string().min(2),
   status: z.enum(["active", "paused"]),
+  niche: z.string().optional(),
+  target_audience: z.string().optional(),
 });

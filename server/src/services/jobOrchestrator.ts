@@ -33,13 +33,17 @@ export async function startAutomationLoop(projectId: string): Promise<void> {
     .update({ status: 'building' })
     .eq('id', projectId);
 
+  const settings = project.settings && typeof project.settings === 'object' ? project.settings as Record<string, unknown> : {};
+  const niche = (settings.niche as string) ?? '';
+  const targetAudience = (settings.target_audience as string) ?? '';
+
   // Phase 1: Enqueue Market Research Agent
   await scheduleAgentTask({
     project_id: projectId,
     agent_type: 'market_research',
     input: {
-      niche: project.settings.niche,
-      target_audience: project.settings.target_audience,
+      niche,
+      target_audience: targetAudience,
     },
     correlation_id: `${correlationId}-market-research`,
   });

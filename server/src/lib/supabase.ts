@@ -2,10 +2,22 @@ import { createClient } from '@supabase/supabase-js';
 import { env } from './config.js';
 import type { Database } from '../types/database.js';
 
-// Public client for user operations
+// Public client for user operations (e.g. browser; do not use for auth in Node)
 export const supabase = createClient<Database>(
   env.SUPABASE_URL,
   env.SUPABASE_ANON_KEY
+);
+
+// Server-side anon client for sign-in only (no localStorage); use for login/signup session
+export const supabaseAnonServer = createClient<Database>(
+  env.SUPABASE_URL,
+  env.SUPABASE_ANON_KEY,
+  {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  }
 );
 
 // Admin client for server-side operations
@@ -37,9 +49,10 @@ export async function getProjectById(projectId: string) {
     .from('projects')
     .select('*')
     .eq('id', projectId)
-    .single();
+    .maybeSingle();
 
   if (error) throw error;
+  if (data === null) throw new Error(`Project not found: ${projectId}`);
   return data;
 }
 
@@ -64,7 +77,7 @@ export async function getIntegrationsByProjectId(projectId: string) {
   return data;
 }
 
-export async function getPagesByProjectId(projectId: string) {
+export async function getPagesByProjectId(projectId: string): Promise<Page[]> {
   const { data, error } = await supabaseAdmin
     .from('pages')
     .select('*')
@@ -72,7 +85,7 @@ export async function getPagesByProjectId(projectId: string) {
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return data;
+  return (data ?? []) as Page[];
 }
 
 export async function getAgentRunsByProjectId(projectId: string, limit = 50) {
@@ -142,13 +155,19 @@ export async function updateAgentRun(id: string, updates: {
   status?: string;
   output?: object;
   error?: string;
+  error_message?: string;
   tokens_used?: number;
   duration_ms?: number;
   completed_at?: string;
 }) {
+  const dbUpdates = { ...updates } as Record<string, unknown>;
+  if ('error' in dbUpdates && dbUpdates.error !== undefined) {
+    dbUpdates.error_message = dbUpdates.error;
+    delete dbUpdates.error;
+  }
   const { data, error } = await supabaseAdmin
     .from('agent_runs')
-    .update(updates)
+    .update(dbUpdates)
     .eq('id', id)
     .select()
     .single();
@@ -163,10 +182,49 @@ export async function createLog(log: {
   level: string;
   message: string;
   data?: object;
+  service?: string;
 }) {
+  const row = {
+    project_id: log.project_id ?? null,
+    agent_run_id: log.agent_run_id ?? null,
+    level: log.level,
+    service: log.service ?? 'ai-seo-os',
+    message: log.message,
+    metadata: log.data ?? {},
+  };
   const { error } = await supabaseAdmin
     .from('logs')
-    .insert(log);
+    .insert(row);
 
   if (error) console.error('Failed to create log:', error);
+}
+
+/** Resolve app user id: by auth id, or by email if same email already has a users row. */
+export async function getAppUserId(authUser: { id: string; email?: string | null }): Promise<string> {
+  const { data: byId } = await supabaseAdmin.from('users').select('id').eq('id', authUser.id).maybeSingle();
+  if (byId) return byId.id;
+
+  const email = authUser.email?.trim();
+  if (email) {
+    const { data: byEmail } = await supabaseAdmin.from('users').select('id').eq('email', email).maybeSingle();
+    if (byEmail) return byEmail.id;
+  }
+
+  const { error: insertErr } = await supabaseAdmin.from('users').insert({
+    id: authUser.id,
+    email: email ?? '',
+    auth_id: authUser.id,
+    company_name: null,
+  });
+  if (!insertErr) return authUser.id;
+
+  if (insertErr.code === '23505' || String(insertErr.message).includes('users_email_key')) {
+    const { data: byEmail } = await supabaseAdmin.from('users').select('id').eq('email', email ?? '').maybeSingle();
+    if (byEmail) return byEmail.id;
+  }
+  throw new AppError(
+    insertErr?.message ?? 'Failed to resolve user',
+    503,
+    'SERVICE_UNAVAILABLE'
+  );
 }

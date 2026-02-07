@@ -4,6 +4,7 @@ import {
   agentTaskQueue,
   buildQueue,
   publishQueue,
+  indexQueue,
   monitorQueue,
   optimizeQueue,
   webhookQueue,
@@ -121,7 +122,7 @@ export async function getQueueHealth(queueName: string): Promise<QueueHealth | n
 
 // Get all queues health
 export async function getAllQueuesHealth(): Promise<QueueHealth[]> {
-  const queueNames = ['agent-tasks', 'build', 'publish', 'monitor', 'optimize', 'webhooks'];
+  const queueNames = ['agent-tasks', 'build', 'publish', 'index', 'monitor', 'optimize', 'webhooks'];
   const healthPromises = queueNames.map(name => getQueueHealth(name));
   const healthResults = await Promise.all(healthPromises);
 
@@ -135,10 +136,13 @@ export async function getWorkerHealth(queueName: string): Promise<WorkerHealth |
     return null;
   }
 
+  const queue = getQueueByName(queueName);
+  const counts = queue ? await queue.getJobCounts() : { active: 0 };
+
   return {
     queue_name: queueName,
-    is_running: !worker.isClosing(),
-    active_jobs: worker.getActiveCount(),
+    is_running: true,
+    active_jobs: counts?.active ?? 0,
     processed_jobs: await getProcessedJobCount(queueName),
     failed_jobs: await getFailedJobCount(queueName),
     last_job_timestamp: await getLastJobTimestamp(queueName),
@@ -164,8 +168,8 @@ export async function getQueueMetrics() {
   const totalFailed = queuesHealth.reduce((sum, q) => sum + q.failed, 0);
   const totalCompleted = queuesHealth.reduce((sum, q) => sum + q.completed, 0);
 
-  const healthyQueues = queuesHealth.filter(q => !q.isPaused).length;
-  const pausedQueues = queuesHealth.filter(q => q.isPaused).length;
+  const healthyQueues = queuesHealth.filter(q => !q.is_paused).length;
+  const pausedQueues = queuesHealth.filter(q => q.is_paused).length;
 
   return {
     queues: {
@@ -180,7 +184,7 @@ export async function getQueueMetrics() {
     },
     workers: {
       total: workersHealth.length,
-      active: workersHealth.filter(w => w.isRunning).length,
+      active: workersHealth.filter(w => w.is_running).length,
       details: workersHealth,
     },
   };
@@ -265,13 +269,13 @@ export async function gracefulShutdown(): Promise<void> {
 
 // Pause all queues
 async function pauseAllQueues(): Promise<void> {
-  const queueNames = ['agent-tasks', 'build', 'publish', 'monitor', 'optimize', 'webhooks'];
+  const queueNames = ['agent-tasks', 'build', 'publish', 'index', 'monitor', 'optimize', 'webhooks'];
   await Promise.all(queueNames.map(name => pauseQueue(name)));
 }
 
 // Close all queues
 async function closeAllQueues(): Promise<void> {
-  const queues = [agentTaskQueue, buildQueue, publishQueue, monitorQueue, optimizeQueue, webhookQueue];
+  const queues = [agentTaskQueue, buildQueue, publishQueue, indexQueue, monitorQueue, optimizeQueue, webhookQueue];
   await Promise.all(queues.map(q => q.close()));
 }
 
@@ -304,7 +308,7 @@ export async function healthCheck(): Promise<{
 
 // Setup queue event listeners for metrics
 export function setupQueueEventListeners() {
-  const queueNames = ['agent-tasks', 'build', 'publish', 'monitor', 'optimize', 'webhooks'];
+  const queueNames = ['agent-tasks', 'build', 'publish', 'index', 'monitor', 'optimize', 'webhooks'];
 
   for (const queueName of queueNames) {
     const events = new QueueEvents(queueName, {

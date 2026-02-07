@@ -12,6 +12,14 @@ const inputSchema = z.object({
   contentType: z.string(),
   tone: z.string(),
   wordCount: z.number().min(300),
+  outline: z.array(z.string()).optional(),
+  internalLinkSlugs: z.array(z.string()).optional(),
+  leadCapture: z.object({
+    webhookUrl: z.string().url(),
+    projectId: z.string(),
+    pageId: z.string(),
+    sourceUrl: z.string(),
+  }).optional(),
 });
 
 const outputSchema = z.object({
@@ -79,27 +87,36 @@ Respond with JSON only.`;
   }
 
   async run(projectId: string, input: PageBuilderInput): Promise<PageBuilderOutput> {
+    // Spec flow: Elementor Builder first (layout), then Content Builder (copy)
+    const layoutContext = `Page: ${input.title}. Target keyword: ${input.targetKeyword}. Content type: ${input.contentType}. Generate layout with hero, sections, and CTA. Full content will be added in the next step.`;
+    const elementorInput = {
+      pageTitle: input.title,
+      content: layoutContext,
+      keywords: [input.targetKeyword],
+      contentType: input.contentType,
+    };
+    const elementorOutput = await elementorBuilderAgent.run(projectId, elementorInput);
+
     const contentInput = {
       page_title: input.title,
       target_keyword: input.targetKeyword,
       content_type: input.contentType,
       tone: input.tone,
       word_count: input.wordCount,
+      outline: input.outline,
+      internal_links: input.internalLinkSlugs,
+      lead_capture: input.leadCapture
+        ? {
+            webhook_url: input.leadCapture.webhookUrl,
+            project_id: input.leadCapture.projectId,
+            page_id: input.leadCapture.pageId,
+            source_url: input.leadCapture.sourceUrl,
+          }
+        : undefined,
     };
-
     const contentOutput = await contentBuilderAgent.run(projectId, contentInput);
 
-    const elementorInput = {
-      pageTitle: input.title,
-      content: contentOutput.content,
-      keywords: [input.targetKeyword],
-      contentType: input.contentType,
-    };
-
-    const elementorOutput = await elementorBuilderAgent.run(projectId, elementorInput);
-
     const pageId = nanoid();
-
     return {
       pageId,
       title: contentOutput.title,

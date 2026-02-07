@@ -22,17 +22,21 @@ const AGENT_CATEGORIES: Record<AgentType, AgentCategory> = {
   fixer: 'execution',
 };
 
+const GEMINI_PRO_PREVIEW = 'gemini-3-pro-preview';
+const GEMINI_FLASH_PREVIEW = 'gemini-3-flash-preview';
+const GEMINI_25_PRO = 'gemini-2.5-pro';
+
 const MODEL_CONFIG = {
   strategy: {
-    primary: 'gemini-2.0-flash-exp',
-    fallback: 'gemini-2.0-flash',
+    primary: GEMINI_PRO_PREVIEW,
+    fallback: GEMINI_25_PRO,
     maxOutputTokens: 2000,
     timeout: 60000,
     temperature: 0.7,
   },
   execution: {
-    primary: 'gemini-2.0-flash-lite',
-    fallback: 'gemini-2.0-flash',
+    primary: GEMINI_PRO_PREVIEW,
+    fallback: GEMINI_FLASH_PREVIEW,
     maxOutputTokens: 1000,
     timeout: 30000,
     temperature: 0.5,
@@ -45,6 +49,8 @@ export interface GeminiRouterRequest {
   userPrompt: string;
   temperature?: number;
   maxTokens?: number;
+  /** Override API timeout in milliseconds (e.g. for heavy agents like elementor_builder). */
+  timeoutMs?: number;
   stream?: boolean;
 }
 
@@ -92,21 +98,33 @@ class GeminiRouter {
         return await this.call(request, useFallback);
       } catch (error) {
         lastError = error as Error;
-        
-        logger.warn({
-          agentType: request.agentType,
-          attempt,
-          error: lastError.message,
-          usedFallback: useFallback,
-        }, 'Gemini call failed, retrying');
+        const category = AGENT_CATEGORIES[request.agentType];
+        const fallbackModel = MODEL_CONFIG[category].fallback;
 
         if (attempt < maxRetries - 1) {
-          if (attempt >= 1 && !useFallback) {
+          if (!useFallback) {
             useFallback = true;
+            logger.warn({
+              agentType: request.agentType,
+              error: lastError.message,
+              fallbackModel,
+            }, 'Switching to fallback model');
+          } else {
+            logger.warn({
+              agentType: request.agentType,
+              attempt,
+              error: lastError.message,
+            }, 'Gemini call failed, retrying');
           }
-          
+
           const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
           await new Promise(resolve => setTimeout(resolve, delay));
+        } else {
+          logger.warn({
+            agentType: request.agentType,
+            error: lastError.message,
+            usedFallback: useFallback,
+          }, 'Gemini call failed after retries');
         }
       }
     }
@@ -143,8 +161,9 @@ class GeminiRouter {
     });
 
     const startTime = Date.now();
+    const timeoutMs = request.timeoutMs ?? config.timeout;
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('Gemini API timeout')), config.timeout);
+      setTimeout(() => reject(new Error('Gemini API timeout')), timeoutMs);
     });
 
     try {
@@ -253,13 +272,15 @@ class GeminiRouter {
   }
 
   private calculateCost(model: string, tokens: number): number {
-    const PRICING = {
+    const PRICING: Record<string, number> = {
+      'gemini-3-pro-preview': 0.000002,
+      'gemini-3-flash-preview': 0.000001,
+      'gemini-2.5-pro': 0.000002,
       'gemini-2.0-flash-exp': 0.000001,
       'gemini-2.0-flash': 0.000001,
       'gemini-2.0-flash-lite': 0.0000005,
     };
-
-    const rate = PRICING[model as keyof typeof PRICING] || 0.000001;
+    const rate = PRICING[model] ?? 0.000002;
     return tokens * rate;
   }
 

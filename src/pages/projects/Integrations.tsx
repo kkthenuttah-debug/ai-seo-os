@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -31,6 +32,9 @@ import {
   BarChart3,
   MapPin
 } from "lucide-react";
+import { integrationsService, type IntegrationFromApi } from "@/services/integrations";
+import { formatDistanceToNow } from "date-fns";
+import { useNotification } from "@/hooks/useNotification";
 
 interface Integration {
   name: string;
@@ -50,53 +54,75 @@ interface Integration {
   };
 }
 
-const mockIntegrations: Integration[] = [
-  {
-    name: "WordPress",
-    status: "connected",
-    connected: true,
-    url: "https://urbangarden.co",
-    lastSync: "30 minutes ago",
-    domain: "urbangarden.co",
-    authMethod: "Application Password",
-    details: {
-      username: "admin",
-      siteTitle: "Urban Garden Co",
-      version: "6.4.2",
-      permissions: ["publish_posts", "edit_posts", "upload_files"],
-      syncFrequency: "Every 15 minutes"
-    }
-  },
-  {
-    name: "Google Search Console",
-    status: "connected",
-    connected: true,
-    url: "https://urbangarden.co",
-    lastSync: "1 hour ago",
-    domain: "urbangarden.co",
-    details: {
-      permissions: ["search_analytics", "sitemaps"],
-      syncFrequency: "Daily"
-    }
-  },
-  {
-    name: "Google Analytics",
-    status: "disconnected",
-    connected: false,
-    domain: "urbangarden.co"
-  },
-  {
-    name: "Google My Business",
-    status: "error",
-    connected: false,
-    domain: "urbangarden.co",
-    errorMessage: "Authentication failed. Please reconnect your account.",
-    lastSync: "2 days ago"
-  }
-];
+const DEFAULT_INTEGRATION: Integration = {
+  name: "",
+  status: "disconnected",
+  connected: false,
+};
+
+function mapIntegration(i: IntegrationFromApi): Integration {
+  const name = i.type === "wordpress" ? "WordPress" : i.type === "gsc" ? "Google Search Console" : i.type;
+  const connected = i.status === "active";
+  const status: Integration["status"] = i.status === "active" ? "connected" : i.status === "error" ? "error" : "disconnected";
+  const data = (i.data || {}) as Record<string, unknown>;
+  return {
+    name,
+    status,
+    connected,
+    url: data.site_url as string | undefined,
+    lastSync: i.last_sync_at ? formatDistanceToNow(new Date(i.last_sync_at), { addSuffix: true }) : undefined,
+    domain: data.site_url ? String(data.site_url).replace(/^https?:\/\//, "").split("/")[0] : undefined,
+    authMethod: i.type === "wordpress" ? "Application Password" : undefined,
+    details: i.type === "wordpress" ? { username: data.username as string } : undefined,
+  };
+}
 
 export default function Integrations() {
-  const [integrations, setIntegrations] = useState<Integration[]>(mockIntegrations);
+  const { projectId } = useParams<{ projectId: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [integrations, setIntegrations] = useState<Integration[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [gscDomainAlert, setGscDomainAlert] = useState(false);
+  const { showError, notifySuccess } = useNotification();
+
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    setLoading(true);
+    integrationsService
+      .list(projectId)
+      .then((data) => {
+        if (!cancelled) setIntegrations(Array.isArray(data) ? data.map(mapIntegration) : []);
+      })
+      .catch((err) => {
+        if (!cancelled) showError(err instanceof Error ? err.message : "Failed to load integrations");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [projectId, showError]);
+
+  useEffect(() => {
+    const gsc = searchParams.get("gsc");
+    if (gsc !== "success" && gsc !== "error") return;
+    if (!projectId) return;
+    if (gsc === "success") {
+      notifySuccess("Google Search Console connected.");
+      integrationsService.list(projectId).then((data) => {
+        setIntegrations(Array.isArray(data) ? data.map(mapIntegration) : []);
+      });
+    } else {
+      const msg = searchParams.get("message");
+      if (msg) showError(decodeURIComponent(msg));
+    }
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete("gsc");
+      next.delete("message");
+      return next;
+    }, { replace: true });
+  }, [projectId, searchParams, setSearchParams, notifySuccess, showError]);
   const [showWordPressDialog, setShowWordPressDialog] = useState(false);
   const [showGscDialog, setShowGscDialog] = useState(false);
   const [wpFormData, setWpFormData] = useState({
@@ -107,7 +133,7 @@ export default function Integrations() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [showPasswords, setShowPasswords] = useState<{[key: string]: boolean}>({});
 
-  const getStatusIcon = (status: string) => {
+  const getStatusIcon = (status: string | undefined) => {
     switch (status) {
       case 'connected':
         return <CheckCircle className="h-5 w-5 text-green-600" />;
@@ -120,7 +146,7 @@ export default function Integrations() {
     }
   };
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string | undefined) => {
     switch (status) {
       case 'connected':
         return <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">Connected</Badge>;
@@ -134,42 +160,23 @@ export default function Integrations() {
   };
 
   const handleWordPressConnect = async () => {
+    if (!projectId) return;
     setIsConnecting(true);
-    
-    // Simulate API call
-    setTimeout(() => {
-      setIsConnecting(false);
-      setShowWordPressDialog(false);
-      
-      // Update integration status
-      setIntegrations(integrations.map(integration => 
-        integration.name === "WordPress" 
-          ? { 
-              ...integration, 
-              status: "connected", 
-              connected: true,
-              url: wpFormData.siteUrl,
-              domain: wpFormData.siteUrl.replace('https://', '').replace('http://', ''),
-              lastSync: "Just now",
-              authMethod: "Application Password",
-              details: {
-                username: wpFormData.username,
-                siteTitle: "Urban Garden Co",
-                version: "6.4.2",
-                permissions: ["publish_posts", "edit_posts", "upload_files"],
-                syncFrequency: "Every 15 minutes"
-              }
-            }
-          : integration
-      ));
-      
-      // Reset form
-      setWpFormData({
-        siteUrl: "",
-        username: "",
-        applicationPassword: ""
+    try {
+      await integrationsService.connectWordPress(projectId, {
+        siteUrl: wpFormData.siteUrl,
+        username: wpFormData.username,
+        applicationPassword: wpFormData.applicationPassword,
       });
-    }, 2000);
+      setShowWordPressDialog(false);
+      setWpFormData({ siteUrl: "", username: "", applicationPassword: "" });
+      const data = await integrationsService.list(projectId);
+      setIntegrations(Array.isArray(data) ? data.map(mapIntegration) : []);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : "Failed to connect WordPress");
+    } finally {
+      setIsConnecting(false);
+    }
   };
 
   const handleWordPressDisconnect = () => {
@@ -187,9 +194,18 @@ export default function Integrations() {
     ));
   };
 
-  const handleGscConnect = () => {
-    // Redirect to Google OAuth
-    window.location.href = "https://accounts.google.com/oauth/authorize?client_id=YOUR_CLIENT_ID&redirect_uri=YOUR_REDIRECT_URI&scope=https://www.googleapis.com/auth/webmasters.readonly&response_type=code";
+  const handleGscConnect = async () => {
+    if (!projectId) return;
+    setIsConnecting(true);
+    try {
+      const { url } = await integrationsService.connectGsc(projectId);
+      if (url) window.location.href = url;
+      else showError("No authorization URL returned");
+    } catch (err) {
+      showError(err instanceof Error ? err.message : "Failed to start Google authorization");
+    } finally {
+      setIsConnecting(false);
+    }
   };
 
   const handleGscDisconnect = () => {
@@ -207,20 +223,47 @@ export default function Integrations() {
     ));
   };
 
-  const handleManualSync = (integrationName: string) => {
-    setIntegrations(integrations.map(integration => 
-      integration.name === integrationName 
-        ? { ...integration, lastSync: "Syncing..." }
-        : integration
-    ));
-    
-    // Simulate sync
+  const handleManualSync = async (integrationName: string) => {
+    if (!projectId) return;
+    if (integrationName === "Google Search Console") {
+      setIntegrations((prev) =>
+        prev.map((i) =>
+          i.name === integrationName ? { ...i, lastSync: "Syncing..." } : i
+        )
+      );
+      try {
+        await integrationsService.syncGsc(projectId);
+                setGscDomainAlert(false);
+                const data = await integrationsService.list(projectId);
+                setIntegrations(Array.isArray(data) ? data.map(mapIntegration) : []);
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : "GSC sync failed";
+                const isDomainNotSet = msg.includes("No GSC property URL") && msg.includes("Set your project domain");
+                if (isDomainNotSet) {
+                  setGscDomainAlert(true);
+                  showError("Set your project domain in Project Settings, then try Sync again.");
+                } else {
+                  if (msg.includes("No verified") || msg.includes("verification") || msg.includes("verify")) {
+                    setGscDomainAlert(true);
+                  }
+                  showError(msg);
+                }
+                const data = await integrationsService.list(projectId);
+                setIntegrations(Array.isArray(data) ? data.map(mapIntegration) : []);
+              }
+      return;
+    }
+    setIntegrations((prev) =>
+      prev.map((i) =>
+        i.name === integrationName ? { ...i, lastSync: "Syncing..." } : i
+      )
+    );
     setTimeout(() => {
-      setIntegrations(integrations.map(integration => 
-        integration.name === integrationName 
-          ? { ...integration, lastSync: "Just now" }
-          : integration
-      ));
+      setIntegrations((prev) =>
+        prev.map((i) =>
+          i.name === integrationName ? { ...i, lastSync: "Just now" } : i
+        )
+      );
     }, 3000);
   };
 
@@ -235,6 +278,13 @@ export default function Integrations() {
     console.log(`Testing connection for ${integrationName}...`);
     // Implement connection test
   };
+
+  const wp = integrations.find((i) => i.name === "WordPress") ?? DEFAULT_INTEGRATION;
+  const gsc = integrations.find((i) => i.name === "Google Search Console") ?? DEFAULT_INTEGRATION;
+  const ga = integrations.find((i) => i.name === "Google Analytics") ?? DEFAULT_INTEGRATION;
+  const gmb = integrations.find((i) => i.name === "Google My Business") ?? DEFAULT_INTEGRATION;
+
+  const safeStatus = (i: Integration) => i?.status ?? "disconnected";
 
   return (
     <div className="space-y-6">
@@ -264,50 +314,50 @@ export default function Integrations() {
                 <Globe className="h-5 w-5" />
                 WordPress
               </CardTitle>
-              {getStatusIcon(integrations[0].status)}
+              {getStatusIcon(safeStatus(wp))}
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">Status</span>
-              {getStatusBadge(integrations[0].status)}
+              {getStatusBadge(safeStatus(wp))}
             </div>
             
-            {integrations[0].connected ? (
+            {wp.connected ? (
               <>
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-muted-foreground">WordPress URL</span>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm">{integrations[0].url}</span>
+                      <span className="text-sm">{wp.url}</span>
                       <Button variant="ghost" size="sm" asChild>
-                        <a href={integrations[0].url} target="_blank" rel="noopener noreferrer">
+                        <a href={wp.url} target="_blank" rel="noopener noreferrer">
                           <ExternalLink className="h-3 w-3" />
                         </a>
                       </Button>
                     </div>
                   </div>
                   
-                  {integrations[0].details && (
+                  {wp.details && (
                     <>
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-muted-foreground">Site Title</span>
-                        <span className="text-sm">{integrations[0].details.siteTitle}</span>
+                        <span className="text-sm">{wp.details.siteTitle}</span>
                       </div>
                       
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-muted-foreground">WordPress Version</span>
-                        <span className="text-sm">{integrations[0].details.version}</span>
+                        <span className="text-sm">{wp.details.version}</span>
                       </div>
                       
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-muted-foreground">Last Sync</span>
-                        <span className="text-sm">{integrations[0].lastSync}</span>
+                        <span className="text-sm">{wp.lastSync}</span>
                       </div>
                       
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-muted-foreground">Sync Frequency</span>
-                        <span className="text-sm">{integrations[0].details.syncFrequency}</span>
+                        <span className="text-sm">{wp.details.syncFrequency}</span>
                       </div>
                     </>
                   )}
@@ -384,22 +434,22 @@ export default function Integrations() {
                 <Settings className="h-5 w-5" />
                 Google Search Console
               </CardTitle>
-              {getStatusIcon(integrations[1].status)}
+              {getStatusIcon(safeStatus(gsc))}
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">Status</span>
-              {getStatusBadge(integrations[1].status)}
+              {getStatusBadge(safeStatus(gsc))}
             </div>
             
-            {integrations[1].connected ? (
+            {gsc.connected ? (
               <>
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">Site URL</span>
+                    <span className="text-sm text-muted-foreground">Property URL</span>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm">{integrations[1].url}</span>
+                      <span className="text-sm">{gsc.url || "Uses project domain"}</span>
                       <Button variant="ghost" size="sm" asChild>
                         <a href="https://search.google.com/search-console" target="_blank" rel="noopener noreferrer">
                           <ExternalLink className="h-3 w-3" />
@@ -407,10 +457,29 @@ export default function Integrations() {
                       </Button>
                     </div>
                   </div>
+                  <p className="text-xs text-muted-foreground">
+                    GSC uses your project domain (Project Settings). When you sync, we add the property to Search Console via the API if needed; you only need to complete verification once in GSC (DNS, HTML file, or meta tag).
+                  </p>
+                  {gscDomainAlert && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+                      <div className="flex items-start gap-2">
+                        <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-500 mt-0.5 shrink-0" />
+                        <div className="text-sm text-amber-800 dark:text-amber-200">
+                          <p className="font-medium mb-1">Set your project domain to sync</p>
+                          <p className="mb-2">Set your project domain in Project Settings. We add the property to Search Console via the API when you sync; complete verification once in Google Search Console (DNS, HTML file, or meta tag). If you connected GSC before, disconnect and reconnect so we can add your property automatically.</p>
+                          <Button variant="outline" size="sm" asChild className="gap-1">
+                            <Link to={`/app/projects/${projectId}/settings`} onClick={() => setGscDomainAlert(false)}>
+                              Go to Project Settings
+                            </Link>
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-muted-foreground">Last Data Sync</span>
-                    <span className="text-sm">{integrations[1].lastSync}</span>
+                    <span className="text-sm">{gsc.lastSync}</span>
                   </div>
                   
                   <div className="flex items-center justify-between">
@@ -463,13 +532,13 @@ export default function Integrations() {
                   <p className="text-sm text-muted-foreground">
                     Connect Google Search Console to track keyword rankings and site performance.
                   </p>
-                  {integrations[1].errorMessage && (
+                  {gsc.errorMessage && (
                     <div className="bg-red-50 dark:bg-red-950/20 p-3 rounded-lg">
                       <div className="flex items-start gap-2">
                         <AlertCircle className="h-4 w-4 text-red-600 mt-0.5" />
                         <div className="text-sm text-red-800 dark:text-red-300">
                           <p className="font-medium mb-1">Connection Error:</p>
-                          <p>{integrations[1].errorMessage}</p>
+                          <p>{gsc.errorMessage}</p>
                         </div>
                       </div>
                     </div>
@@ -479,9 +548,10 @@ export default function Integrations() {
                 <Button 
                   onClick={handleGscConnect}
                   className="w-full gap-2"
+                  disabled={isConnecting}
                 >
-                  <Key className="h-4 w-4" />
-                  Authorize with Google
+                  {isConnecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Key className="h-4 w-4" />}
+                  {isConnecting ? "Redirecting..." : "Authorize with Google"}
                 </Button>
               </>
             )}
@@ -496,13 +566,13 @@ export default function Integrations() {
                 <BarChart3 className="h-5 w-5" />
                 Google Analytics
               </CardTitle>
-              {getStatusIcon(integrations[2].status)}
+              {getStatusIcon(safeStatus(ga))}
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">Status</span>
-              {getStatusBadge(integrations[2].status)}
+              {getStatusBadge(safeStatus(ga))}
             </div>
             
             <div className="space-y-3">
@@ -526,22 +596,22 @@ export default function Integrations() {
                 <MapPin className="h-5 w-5" />
                 Google My Business
               </CardTitle>
-              {getStatusIcon(integrations[3].status)}
+              {getStatusIcon(safeStatus(gmb))}
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">Status</span>
-              {getStatusBadge(integrations[3].status)}
+              {getStatusBadge(safeStatus(gmb))}
             </div>
             
-            {integrations[3].errorMessage && (
+            {gmb.errorMessage && (
               <div className="bg-red-50 dark:bg-red-950/20 p-3 rounded-lg">
                 <div className="flex items-start gap-2">
                   <AlertCircle className="h-4 w-4 text-red-600 mt-0.5" />
                   <div className="text-sm text-red-800 dark:text-red-300">
                     <p className="font-medium mb-1">Connection Error:</p>
-                    <p>{integrations[3].errorMessage}</p>
+                    <p>{gmb.errorMessage}</p>
                   </div>
                 </div>
               </div>

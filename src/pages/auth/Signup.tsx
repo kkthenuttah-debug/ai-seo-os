@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -15,6 +16,7 @@ type SignupFormValues = z.infer<typeof signupSchema>;
 export default function Signup() {
   const navigate = useNavigate();
   const { signup, isLoading } = useAuth();
+  const [apiError, setApiError] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
@@ -26,8 +28,13 @@ export default function Signup() {
   });
 
   const onSubmit = async (values: SignupFormValues) => {
-    await signup(values.email, values.password, values.company);
-    navigate("/app/dashboard");
+    setApiError(null);
+    try {
+      await signup(values.email, values.password, values.company);
+      navigate("/app/dashboard");
+    } catch (err) {
+      setApiError(err instanceof Error ? err.message : "Signup failed. Please try again.");
+    }
   };
 
   return (
@@ -73,6 +80,7 @@ export default function Signup() {
         </span>
       </div>
       {errors.terms ? <ErrorMessage message={errors.terms.message ?? ""} /> : null}
+      {apiError ? <ErrorMessage message={apiError} /> : null}
       <Button type="submit" className="w-full" disabled={isLoading}>
         Create account
       </Button>

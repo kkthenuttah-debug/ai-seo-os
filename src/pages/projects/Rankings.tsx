@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -27,14 +28,14 @@ import {
   Tooltip, 
   ResponsiveContainer 
 } from "recharts";
-import { 
-  Search, 
-  Filter, 
-  Download, 
-  TrendingUp, 
-  TrendingDown, 
-  ArrowUp, 
-  ArrowDown, 
+import {
+  Search,
+  Filter,
+  Download,
+  TrendingUp,
+  TrendingDown,
+  ArrowUp,
+  ArrowDown,
   Minus,
   Eye,
   Target,
@@ -43,6 +44,9 @@ import {
   RefreshCw,
   MoreVertical
 } from "lucide-react";
+import { rankingsService, type RankingFromApi } from "@/services/rankings";
+import { formatDistanceToNow } from "date-fns";
+import { useNotification } from "@/hooks/useNotification";
 
 interface Ranking {
   id: string;
@@ -59,131 +63,48 @@ interface Ranking {
   lastUpdated: string;
 }
 
-const mockRankings: Ranking[] = [
-  {
-    id: "1",
-    keyword: "urban gardening",
-    position: 3,
-    change7d: 2,
-    change30d: -1,
-    searchVolume: 8100,
-    difficulty: 65,
-    clicks: 1240,
-    impressions: 12800,
-    ctr: 9.7,
-    url: "/urban-gardening-guide",
-    lastUpdated: "2 hours ago"
-  },
-  {
-    id: "2",
-    keyword: "balcony composting",
-    position: 5,
-    change7d: -1,
-    change30d: 3,
-    searchVolume: 3200,
-    difficulty: 45,
-    clicks: 456,
-    impressions: 4200,
-    ctr: 10.9,
-    url: "/balcony-composting-guide",
-    lastUpdated: "2 hours ago"
-  },
-  {
-    id: "3",
-    keyword: "container gardening",
-    position: 8,
-    change7d: 1,
-    change30d: -2,
-    searchVolume: 5400,
-    difficulty: 52,
-    clicks: 312,
-    impressions: 5600,
-    ctr: 5.6,
-    url: "/container-gardening-tips",
-    lastUpdated: "2 hours ago"
-  },
-  {
-    id: "4",
-    keyword: "indoor herb garden",
-    position: 12,
+function mapRanking(r: RankingFromApi): Ranking {
+  return {
+    id: r.id,
+    keyword: r.keyword,
+    position: r.position,
     change7d: 0,
-    change30d: 1,
-    searchVolume: 4400,
-    difficulty: 38,
-    clicks: 189,
-    impressions: 4100,
-    ctr: 4.6,
-    url: "/indoor-herb-garden-setup",
-    lastUpdated: "2 hours ago"
-  },
-  {
-    id: "5",
-    keyword: "vertical gardening",
-    position: 15,
-    change7d: -3,
-    change30d: -5,
-    searchVolume: 2800,
-    difficulty: 42,
-    clicks: 89,
-    impressions: 3200,
-    ctr: 2.8,
-    url: "/vertical-gardening-ideas",
-    lastUpdated: "2 hours ago"
-  },
-  {
-    id: "6",
-    keyword: "apartment gardening",
-    position: 18,
-    change7d: 2,
-    change30d: 4,
-    searchVolume: 2100,
-    difficulty: 35,
-    clicks: 67,
-    impressions: 2800,
-    ctr: 2.4,
-    url: "/apartment-gardening-guide",
-    lastUpdated: "2 hours ago"
-  },
-  {
-    id: "7",
-    keyword: "small space garden",
-    position: 22,
-    change7d: -1,
     change30d: 0,
-    searchVolume: 1800,
-    difficulty: 33,
-    clicks: 34,
-    impressions: 2100,
-    ctr: 1.6,
-    url: "/small-space-gardening",
-    lastUpdated: "2 hours ago"
-  },
-  {
-    id: "8",
-    keyword: "windowsill herbs",
-    position: 25,
-    change7d: 1,
-    change30d: -1,
-    searchVolume: 1200,
-    difficulty: 28,
-    clicks: 23,
-    impressions: 1800,
-    ctr: 1.3,
-    url: "/windowsill-herb-garden",
-    lastUpdated: "2 hours ago"
-  }
-];
+    searchVolume: r.search_volume ?? 0,
+    difficulty: r.difficulty ?? 0,
+    clicks: 0,
+    impressions: 0,
+    ctr: 0,
+    url: r.url ?? "",
+    lastUpdated: formatDistanceToNow(new Date(r.tracked_at), { addSuffix: true }),
+  };
+}
 
-const trendData = [
-  { date: "Jan 1", position: 8 },
-  { date: "Jan 8", position: 7 },
-  { date: "Jan 15", position: 5 },
-  { date: "Jan 22", position: 4 },
-  { date: "Jan 29", position: 3 }
-];
+const trendData: { date: string; position: number }[] = [];
 
 export default function Rankings() {
-  const [rankings, setRankings] = useState<Ranking[]>(mockRankings);
+  const { projectId } = useParams<{ projectId: string }>();
+  const [rankings, setRankings] = useState<Ranking[]>([]);
+  const [loading, setLoading] = useState(true);
+  const { showError } = useNotification();
+
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    setLoading(true);
+    rankingsService
+      .list(projectId, { limit: 100 })
+      .then((res) => {
+        if (!cancelled) setRankings(res.rankings.map(mapRanking));
+      })
+      .catch((err) => {
+        if (!cancelled) showError(err instanceof Error ? err.message : "Failed to load rankings");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [projectId, showError]);
   const [searchTerm, setSearchTerm] = useState("");
   const [positionFilter, setPositionFilter] = useState<string>("all");
   const [sortBy, setSortBy] = useState<string>("position-asc");
@@ -444,7 +365,7 @@ export default function Rankings() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
-            <span>Keywords ({filteredRankings.length})</span>
+            <span>Keywords ({loading ? "…" : filteredRankings.length})</span>
             <div className="flex items-center gap-2">
               <Checkbox
                 checked={selectedRankings.size === filteredRankings.length && filteredRankings.length > 0}
@@ -473,7 +394,20 @@ export default function Rankings() {
                 </tr>
               </thead>
               <tbody>
-                {filteredRankings.map((ranking) => (
+                {loading ? (
+                  <tr>
+                    <td colSpan={11} className="p-8 text-center text-muted-foreground">
+                      Loading rankings…
+                    </td>
+                  </tr>
+                ) : filteredRankings.length === 0 ? (
+                  <tr>
+                    <td colSpan={11} className="p-8 text-center text-muted-foreground">
+                      No rankings yet. Sync with Google Search Console to populate.
+                    </td>
+                  </tr>
+                ) : (
+                filteredRankings.map((ranking) => (
                   <tr key={ranking.id} className="border-b hover:bg-muted/50">
                     <td className="p-4">
                       <Checkbox
@@ -562,7 +496,8 @@ export default function Rankings() {
                       </DropdownMenu>
                     </td>
                   </tr>
-                ))}
+                ))
+                )}
               </tbody>
             </table>
           </div>

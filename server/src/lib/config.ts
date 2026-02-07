@@ -5,7 +5,7 @@ config();
 export const env = {
   // Server
   NODE_ENV: process.env.NODE_ENV || 'development',
-  PORT: parseInt(process.env.PORT || '3001'),
+  PORT: parseInt(process.env.PORT || '3000'),
   HOST: process.env.HOST || '0.0.0.0',
 
   // Supabase
@@ -13,23 +13,23 @@ export const env = {
   SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || '',
   SUPABASE_SERVICE_KEY: process.env.SUPABASE_SERVICE_KEY || '',
 
-  // Redis
-  REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
+  // Redis (use 127.0.0.1 to avoid IPv6 ::1 connection refused on Windows)
+  REDIS_URL: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
 
   // Gemini AI
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
 
-  // Google OAuth (for GSC)
+  // Google OAuth (for GSC). Must match exactly (no trailing slash) with Authorized redirect URI in Google Cloud Console.
   GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID || '',
   GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET || '',
-  GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/integrations/gsc/callback',
+  GOOGLE_REDIRECT_URI: (process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/integrations/gsc/callback').replace(/\/+$/, ''),
 
   // JWT
   JWT_SECRET: process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production',
 
   // App
   FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:5173',
-  API_URL: process.env.API_URL || 'http://localhost:3001',
+  API_URL: process.env.API_URL || 'http://localhost:3000',
 
   // Webhooks
   WEBHOOK_SECRET: process.env.WEBHOOK_SECRET || '',

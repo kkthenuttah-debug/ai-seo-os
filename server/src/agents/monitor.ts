@@ -18,34 +18,42 @@ const inputSchema = z.object({
   })),
 });
 
+const rankingItemSchema = z.object({
+  keyword: z.string().optional().default(''),
+  position: z.number().optional().default(0),
+  previousPosition: z.union([z.number(), z.null()]).optional().default(null),
+  change: z.number().optional().default(0),
+  url: z.string().optional().default(''),
+  pageId: z.string().optional().default(''),
+});
+
 const outputSchema = z.object({
-  rankings: z.array(z.object({
-    keyword: z.string(),
-    position: z.number(),
-    previousPosition: z.number().nullable(),
-    change: z.number(),
-    url: z.string(),
-    pageId: z.string(),
-  })),
+  rankings: z.array(rankingItemSchema).optional().default([]),
   trends: z.array(z.object({
-    metric: z.string(),
-    direction: z.enum(['up', 'down', 'stable']),
-    changePercentage: z.number(),
-    analysis: z.string(),
-  })),
+    metric: z.string().optional().default(''),
+    direction: z.enum(['up', 'down', 'stable']).optional().default('stable'),
+    changePercentage: z.number().optional().default(0),
+    analysis: z.string().optional().default(''),
+  })).optional().default([]),
   alerts: z.array(z.object({
-    type: z.enum(['warning', 'critical', 'info']),
-    message: z.string(),
+    type: z.enum(['warning', 'critical', 'info']).optional().default('info'),
+    message: z.string().optional().default(''),
     pageId: z.string().optional(),
     keyword: z.string().optional(),
-    actionRequired: z.boolean(),
-  })),
+    actionRequired: z.boolean().optional().default(false),
+  })).optional().default([]),
   recommendations: z.array(z.object({
-    type: z.string(),
+    type: z.string().optional().default(''),
     pageId: z.string().optional(),
-    suggestion: z.string(),
+    suggestion: z.string().optional().default(''),
+    priority: z.enum(['high', 'medium', 'low']).optional().default('medium'),
+  })).optional().default([]),
+  optimization_candidates: z.array(z.object({
+    page_slug: z.string(),
     priority: z.enum(['high', 'medium', 'low']),
-  })),
+    reason: z.string().optional(),
+  })).optional().default([]),
+  health_score: z.number().optional(),
 });
 
 const SYSTEM_PROMPT = `You are an expert SEO performance analyst with deep expertise in Google Search Console data analysis and ranking optimization.

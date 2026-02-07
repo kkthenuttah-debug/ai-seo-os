@@ -3,9 +3,13 @@ import { getWorkerOptions } from '../queues/config.js';
 import { logger } from '../lib/logger.js';
 import { createOrchestrator } from '../services/orchestrator.js';
 import { supabaseAdmin, getProjectById, getPagesByProjectId } from '../lib/supabase.js';
+import { redis } from '../lib/redis.js';
+import { scheduleBuildJob, schedulePublishJob } from '../queues/index.js';
 import type { BuildJob } from '../types/index.js';
 
 const log = logger.child({ worker: 'build' });
+
+const CONTENT_PENDING_KEY = (projectId: string) => `build:content_pending:${projectId}`;
 
 async function processBuildJob(job: Job<BuildJob>) {
   const { project_id, phase, page_id } = job.data;
@@ -23,41 +27,68 @@ async function processBuildJob(job: Job<BuildJob>) {
       }
 
       case 'architecture': {
-        const research = project.settings?.market_research;
+        let research = project.settings?.market_research;
+        if (!research) {
+          const { data: run } = await supabaseAdmin
+            .from('agent_runs')
+            .select('output')
+            .eq('project_id', project_id)
+            .eq('agent_type', 'market_research')
+            .eq('status', 'completed')
+            .order('completed_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          research = run?.output ?? null;
+        }
         if (!research) throw new Error('Market research not found');
         await orchestrator.runSiteArchitecture(research);
         break;
       }
 
       case 'content': {
-        // Build content for all draft pages
         const pages = await getPagesByProjectId(project_id);
         const draftPages = pages.filter(p => p.status === 'draft');
 
-        for (const page of draftPages) {
-          await orchestrator.buildPageContent(page.id);
-
-          // Update job progress
-          await job.updateProgress({
-            current: draftPages.indexOf(page) + 1,
-            total: draftPages.length,
-            currentPage: page.slug,
-          });
+        if (page_id) {
+          await orchestrator.buildPageContent(page_id);
+          const remaining = await redis.decr(CONTENT_PENDING_KEY(project_id));
+          if (remaining === 0) {
+            await redis.del(CONTENT_PENDING_KEY(project_id));
+            log.info({ projectId: project_id }, 'All content jobs completed; scheduling Publisher (per spec)');
+            const readyPages = (await getPagesByProjectId(project_id)).filter(p => p.status === 'ready');
+            for (let i = 0; i < readyPages.length; i++) {
+              await schedulePublishJob(
+                { project_id, page_id: readyPages[i].id },
+                { delay: 2000 + i * 5000 }
+              );
+            }
+          }
+        } else {
+          // Fan-out: enqueue one job per page so workers process in parallel
+          if (draftPages.length === 0) {
+            log.info({ projectId: project_id }, 'No draft pages to build');
+            break;
+          }
+          await redis.set(CONTENT_PENDING_KEY(project_id), draftPages.length);
+          for (let i = 0; i < draftPages.length; i++) {
+            const page = draftPages[i];
+            await scheduleBuildJob(
+              { project_id, phase: 'content', page_id: page.id },
+              { priority: page.slug === 'home' ? 1 : 2 }
+            );
+          }
+          log.info({ projectId: project_id, pageCount: draftPages.length }, 'Content phase fanned out to parallel jobs');
         }
         break;
       }
 
       case 'elementor': {
-        // Elementor data is built as part of page building
-        // This phase can be used for additional layout optimization
-        log.info({ projectId: project_id }, 'Elementor phase - layouts already built');
+        log.info({ projectId: project_id }, 'Elementor phase - layouts built in content phase');
         break;
       }
 
       case 'linking': {
-        // Internal linking is done during content building
-        // This phase can be used for link optimization
-        log.info({ projectId: project_id }, 'Linking phase - links already added');
+        log.info({ projectId: project_id }, 'Linking phase - internal links applied in content phase');
         break;
       }
 

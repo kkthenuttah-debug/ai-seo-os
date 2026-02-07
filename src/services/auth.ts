@@ -1,12 +1,23 @@
 import { api } from "@/services/api";
-import type { ApiResponse } from "@/types/api";
-import type { User } from "@/types/models";
+
+export interface AuthSession {
+  session: { access_token: string; refresh_token: string };
+  user: { id: string; email: string | undefined };
+}
+
+export interface AuthProfile {
+  id: string;
+  email: string;
+  company_name: string | null;
+}
 
 export const authService = {
   login: (email: string, password: string) =>
-    api.post<ApiResponse<User>>("/auth/login", { email, password }),
-  signup: (email: string, password: string, company: string) =>
-    api.post<ApiResponse<User>>("/auth/signup", { email, password, company }),
-  logout: () => api.post<ApiResponse<null>>("/auth/logout"),
-  refresh: () => api.post<ApiResponse<User>>("/auth/refresh"),
+    api.post<AuthSession>("/auth/login", { email, password }),
+  signup: (email: string, password: string, companyName: string) =>
+    api.post<AuthSession>("/auth/signup", { email, password, companyName }),
+  logout: () => api.post<{ success: boolean }>("/auth/logout"),
+  refresh: (refresh_token: string) =>
+    api.post<AuthSession>("/auth/refresh", { refresh_token }),
+  me: () => api.get<AuthProfile>("/auth/me"),
 };

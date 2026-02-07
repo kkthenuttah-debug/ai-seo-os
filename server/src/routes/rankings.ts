@@ -3,7 +3,22 @@ import { z } from 'zod';
 import { supabaseAdmin } from '../lib/supabase.js';
 import { authenticate, verifyProjectOwnership } from '../middleware/auth.js';
 import { NotFoundError, ValidationError } from '../utils/errors.js';
-import { createGSCService } from '../services/gsc.js';
+import { addSiteToSearchConsole, createGSCService, getFirstVerifiedSiteUrl, getVerifiedSiteUrlMatchingDomain } from '../services/gsc.js';
+import { decryptValue } from '../utils/crypto.js';
+
+/** Derive GSC property URL from project domain or wordpress_url. */
+function deriveGscSiteUrlFromProject(project: {
+  domain?: string | null;
+  wordpress_url?: string | null;
+}): string | null {
+  const raw = (project.wordpress_url ?? project.domain ?? '').toString().trim();
+  if (!raw) return null;
+  if (raw.startsWith('http://') || raw.startsWith('https://')) {
+    return raw.endsWith('/') ? raw : `${raw}/`;
+  }
+  const domain = raw.replace(/^\/+|\/+$/g, '');
+  return domain ? `https://${domain}/` : null;
+}
 
 const listRankingsSchema = z.object({
   search: z.string().optional(),
@@ -145,6 +160,18 @@ export async function rankingsRoutes(app: FastifyInstance) {
     '/projects/:projectId/rankings/sync',
     { preHandler: [verifyProjectOwnership] },
     async (request) => {
+      try {
+        return await runRankingsSync(request);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Sync failed';
+        if (err instanceof ValidationError) throw err;
+        request.log.warn({ err, projectId: (request.params as { projectId: string }).projectId }, 'Rankings sync error');
+        throw new ValidationError(msg);
+      }
+    }
+  );
+
+  async function runRankingsSync(request: Parameters<Parameters<typeof app.post>[1]>[0]) {
       const { projectId } = request.params as { projectId: string };
 
       // Get GSC integration
@@ -163,15 +190,70 @@ export async function rankingsRoutes(app: FastifyInstance) {
         throw new ValidationError('Google Search Console integration is not active');
       }
 
-      // Trigger GSC sync (simplified - in real implementation would use GSC service)
+      if (!gscIntegration.access_token_encrypted || !gscIntegration.refresh_token_encrypted) {
+        throw new ValidationError('GSC integration is missing credentials. Disconnect and reconnect Google Search Console in Integrations.');
+      }
+
+      const { data: project } = await supabaseAdmin
+        .from('projects')
+        .select('domain, wordpress_url')
+        .eq('id', projectId)
+        .single();
+
+      const creds = {
+        access_token: decryptValue(gscIntegration.access_token_encrypted || ''),
+        refresh_token: decryptValue(gscIntegration.refresh_token_encrypted || ''),
+        token_expiry: gscIntegration.expires_at || new Date().toISOString(),
+      };
+      let siteUrl = (gscIntegration.data?.site_url as string) || '';
+      if (!siteUrl) {
+        siteUrl = deriveGscSiteUrlFromProject(project ?? {}) ?? '';
+      }
+      if (!siteUrl) {
+        const firstSite = await getFirstVerifiedSiteUrl(creds);
+        if (!firstSite) {
+          throw new ValidationError(
+            'No GSC property URL. Set your project domain in Project Settings (or add and verify your site in Google Search Console).'
+          );
+        }
+        siteUrl = firstSite;
+      }
+      const addResult = await addSiteToSearchConsole(creds, siteUrl);
+      if (!addResult.added && (addResult.error?.includes('scope') || addResult.error?.includes('403'))) {
+        request.log.info({ projectId }, 'GSC add-site skipped (reconnect with full scope to add property via API)');
+      }
+      const matchResult = await getVerifiedSiteUrlMatchingDomain(creds, siteUrl);
+      if (matchResult.matchedUrl) {
+        siteUrl = matchResult.matchedUrl;
+      } else {
+        const accountHint =
+          matchResult.verifiedCount === 0
+            ? ' The Google account connected here has no verified properties in Search Console. Use the same Google account that verified your site in Search Console: disconnect GSC in Integrations and reconnect with that account.'
+            : ' The Google account connected here has verified properties, but none match your project domain. Use the same Google account that verified this site in Search Console: disconnect GSC in Integrations and reconnect with that account.';
+        throw new ValidationError(
+          `No verified Search Console property found for your project domain.${accountHint}`
+        );
+      }
+      const hadStoredSiteUrl = !!(gscIntegration.data?.site_url as string);
+      if (!hadStoredSiteUrl || (gscIntegration.data?.site_url as string) !== siteUrl) {
+        const dataObj = gscIntegration.data && typeof gscIntegration.data === 'object' && !Array.isArray(gscIntegration.data)
+          ? gscIntegration.data as Record<string, unknown>
+          : {};
+        const { error: updateErr } = await supabaseAdmin
+          .from('integrations')
+          .update({ data: { ...dataObj, site_url: siteUrl } })
+          .eq('id', gscIntegration.id);
+        if (updateErr) {
+          request.log.warn({ err: updateErr, projectId }, 'Failed to store GSC site_url');
+          throw new ValidationError(updateErr.message || 'Failed to save integration');
+        }
+      }
+
       try {
-        // Get GSC integration credentials
         const gscService = createGSCService(
           {
-            access_token: gscIntegration.access_token_encrypted || '',
-            refresh_token: gscIntegration.refresh_token_encrypted || '',
-            token_expiry: gscIntegration.expires_at || '',
-            site_url: (gscIntegration.data?.site_url as string) || '',
+            ...creds,
+            site_url: siteUrl,
           },
           gscIntegration.id
         );
@@ -201,36 +283,35 @@ export async function rankingsRoutes(app: FastifyInstance) {
               .eq('keyword', snapshot.query)
               .single();
 
+            // rankings.position has CHECK (position > 0); use null when 0 or missing
+            const pos = snapshot.position && snapshot.position > 0 ? snapshot.position : null;
             if (existingRanking) {
-              // Update existing ranking
-              const newPosition = snapshot.position || 0;
               const previousPosition = existingRanking.position;
-              const positionChange = previousPosition ? newPosition - previousPosition : null;
+              const positionChange = previousPosition != null && pos != null ? pos - previousPosition : null;
 
               await supabaseAdmin
                 .from('rankings')
                 .update({
-                  position: newPosition,
+                  position: pos ?? existingRanking.position,
                   previous_position: previousPosition,
                   position_change: positionChange,
                   url: snapshot.page,
-                  search_volume: snapshot.impressions, // Using impressions as proxy for volume
+                  search_volume: snapshot.impressions ?? null,
                   tracked_at: new Date().toISOString(),
                 })
                 .eq('id', existingRanking.id);
-            } else {
-              // Insert new ranking
+            } else if (pos != null) {
               await supabaseAdmin
                 .from('rankings')
                 .insert({
                   project_id: projectId,
                   keyword: snapshot.query,
                   page_id: null,
-                  position: snapshot.position || 0,
+                  position: pos,
                   previous_position: null,
                   position_change: null,
-                  url: snapshot.page,
-                  search_volume: snapshot.impressions,
+                  url: snapshot.page ?? null,
+                  search_volume: snapshot.impressions ?? null,
                   difficulty: null,
                   tracked_at: new Date().toISOString(),
                 });
@@ -243,11 +324,31 @@ export async function rankingsRoutes(app: FastifyInstance) {
           snapshotCount: recentSnapshots?.length || 0,
           syncedAt: new Date().toISOString(),
         };
-      } catch (error) {
-        throw new ValidationError('Failed to sync GSC data');
+      } catch (error: unknown) {
+        const message = getSyncErrorMessage(error);
+        request.log.warn({ err: error, projectId }, 'GSC sync failed');
+        throw new ValidationError(message);
       }
+  }
+
+  function getSyncErrorMessage(error: unknown): string {
+    if (error instanceof Error) return error.message;
+    if (error && typeof error === 'object') {
+      const o = error as Record<string, unknown>;
+      if (typeof o.message === 'string') return o.message;
+      const data = o.response?.data;
+      if (data && typeof data === 'object') {
+        const d = data as Record<string, unknown>;
+        const err = d.error;
+        if (err && typeof err === 'object' && typeof (err as { message?: string }).message === 'string') {
+          return (err as { message: string }).message;
+        }
+        if (typeof d.message === 'string') return d.message;
+      }
+      if (typeof o.statusMessage === 'string') return o.statusMessage;
     }
-  );
+    return 'Failed to sync GSC data. Check server logs for details.';
+  }
 
   app.get(
     '/projects/:projectId/rankings/insights',

@@ -14,7 +14,7 @@ const leadSchema = z.object({
   name: z.string().optional(),
   message: z.string().optional(),
   phone: z.string().optional(),
-  sourceUrl: z.string().url().optional(),
+  sourceUrl: z.string().optional(), // full URL or path of the page where the lead was captured
   data: z.record(z.unknown()).optional(),
 });
 
@@ -27,16 +27,24 @@ const pagePublishSchema = z.object({
   publishedAt: z.string().optional(),
 });
 
+const webhookEventEnum = z.enum([
+  'lead.created',
+  'page.published',
+  'agent.failed',
+  'ranking.changed',
+  'monitor.completed',
+]);
+
 const registerWebhookSchema = z.object({
   url: z.string().url(),
-  events: z.array(z.enum(['lead.created', 'page.published', 'agent.failed', 'ranking.changed'])),
+  events: z.array(webhookEventEnum),
   secret: z.string().optional(),
   active: z.boolean().default(true),
 });
 
 const updateWebhookSchema = z.object({
   url: z.string().url().optional(),
-  events: z.array(z.enum(['lead.created', 'page.published', 'agent.failed', 'ranking.changed'])).optional(),
+  events: z.array(webhookEventEnum).optional(),
   active: z.boolean().optional(),
   secret: z.string().optional(),
 });
@@ -235,28 +243,10 @@ export async function webhooksRoutes(app: FastifyInstance) {
         offset: z.coerce.number().int().min(0).default(0),
       }).parse(request.query);
 
-      // In a real implementation, you'd have a webhook_logs table
-      // For now, return mock data
-      const mockLogs = Array.from({ length: 10 }, (_, i) => ({
-        id: crypto.randomUUID(),
-        webhookId,
-        event: ['lead.created', 'page.published', 'agent.failed', 'ranking.changed'][i % 4],
-        status: ['success', 'success', 'failed', 'success'][i % 4] as 'success' | 'failed' | 'pending',
-        statusCode: [200, 200, 500, 200][i % 4],
-        responseTime: Math.floor(Math.random() * 500) + 50,
-        errorMessage: i % 4 === 2 ? 'Connection timeout' : null,
-        payload: {},
-        triggeredAt: new Date(Date.now() - i * 3600000).toISOString(),
-      }));
-
-      let filteredLogs = mockLogs;
-      if (status) {
-        filteredLogs = mockLogs.filter(log => log.status === status);
-      }
-
+      // No webhook_logs table yet; return empty list until implemented
       return {
-        logs: filteredLogs.slice(offset, offset + limit),
-        total: filteredLogs.length,
+        logs: [],
+        total: 0,
         limit,
         offset,
       };

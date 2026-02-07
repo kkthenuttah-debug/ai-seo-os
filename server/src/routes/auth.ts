@@ -1,6 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { supabase, supabaseAdmin } from "../lib/supabase.js";
+import { env } from "../lib/config.js";
+import { logger } from "../lib/logger.js";
+import { supabaseAdmin, supabaseAnonServer } from "../lib/supabase.js";
 import { authenticate } from "../middleware/auth.js";
 import { AuthError, ValidationError } from "../utils/errors.js";
 
@@ -8,6 +10,7 @@ const signupSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
   companyName: z.string().optional(),
+  company: z.string().optional(), // frontend may send "company"
 });
 
 const loginSchema = z.object({
@@ -25,62 +28,89 @@ const passwordResetSchema = z.object({
 
 export async function authRoutes(app: FastifyInstance) {
   app.post("/auth/signup", async (request) => {
-    const body = signupSchema.parse(request.body);
+    try {
+      const body = signupSchema.parse(request.body);
+      const companyName = body.companyName ?? body.company ?? null;
 
-    const { data, error } = await supabase.auth.signUp({
-      email: body.email,
-      password: body.password,
-    });
+      if (!env.SUPABASE_SERVICE_KEY) {
+        throw new AuthError("Server auth is not configured. Set SUPABASE_SERVICE_KEY for signup.");
+      }
 
-    if (error) throw new AuthError(error.message);
-    if (!data.user) throw new AuthError("Failed to create user");
+      const { data, error } = await supabaseAdmin.auth.admin.createUser({
+        email: body.email,
+        password: body.password,
+        email_confirm: true,
+      });
 
-    // Create user record in DB
-    const { error: dbError } = await supabaseAdmin.from("users").insert({
-      id: data.user.id,
-      email: body.email,
-      auth_id: data.user.id,
-      company_name: body.companyName || null,
-    });
+      if (error) throw new AuthError(error.message);
+      if (!data.user) throw new AuthError("Failed to create user");
 
-    if (dbError) {
-      // If DB record creation fails, we might want to delete the auth user,
-      // but Supabase doesn't easily allow that from the client.
-      // For now, just log and throw.
-      console.error("Failed to create user record:", dbError);
-    }
-
-    return {
-      session: data.session,
-      user: {
+      const { error: dbError } = await supabaseAdmin.from("users").insert({
         id: data.user.id,
-        email: data.user.email,
-      },
-    };
+        email: body.email,
+        auth_id: data.user.id,
+        company_name: companyName,
+      });
+
+      if (dbError) {
+        logger.error({ dbError }, "Signup: failed to create user record");
+        throw new AuthError("Account was created but profile setup failed. Please try logging in.");
+      }
+
+      // admin.createUser does not return a session; sign in with anon client to get tokens
+      const { data: signInData, error: signInError } = await supabaseAnonServer.auth.signInWithPassword({
+        email: body.email,
+        password: body.password,
+      });
+      if (signInError || !signInData?.session) {
+        throw new AuthError("Account created. Please sign in with your email and password.");
+      }
+
+      const session = signInData.session;
+      return {
+        session: {
+          access_token: session.access_token,
+          refresh_token: session.refresh_token ?? "",
+        },
+        user: {
+          id: signInData.user.id,
+          email: signInData.user.email ?? body.email,
+        },
+      };
+    } catch (err) {
+      if (err instanceof AuthError || err instanceof ValidationError) throw err;
+      if (err && typeof err === "object" && "name" in err && (err as { name: string }).name === "ZodError") throw err;
+      logger.error({ err }, "Signup unexpected error");
+      throw new AuthError("Signup failed. Please try again or sign in if you already have an account.");
+    }
   });
 
   app.post("/auth/login", async (request) => {
     const body = loginSchema.parse(request.body);
 
-    const { data, error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabaseAnonServer.auth.signInWithPassword({
       email: body.email,
       password: body.password,
     });
 
     if (error) throw new AuthError(error.message);
+    const session = data.session;
+    if (!session) throw new AuthError("No session returned");
 
     return {
-      session: data.session,
+      session: {
+        access_token: session.access_token,
+        refresh_token: session.refresh_token ?? "",
+      },
       user: {
         id: data.user.id,
-        email: data.user.email,
+        email: data.user.email ?? body.email,
       },
     };
   });
 
-  app.post("/auth/logout", async (request) => {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw new AuthError(error.message);
+  app.post("/auth/logout", async () => {
+    await supabaseAnonServer.auth.signOut().catch(() => {});
     return { success: true };
   });
 
@@ -90,14 +120,19 @@ export async function authRoutes(app: FastifyInstance) {
       throw new ValidationError("Refresh token is required");
     }
 
-    const { data, error } = await supabase.auth.refreshSession({
+    const { data, error } = await supabaseAnonServer.auth.refreshSession({
       refresh_token,
     });
 
     if (error) throw new AuthError(error.message);
+    const session = data.session;
+    if (!session) throw new AuthError("No session returned");
 
     return {
-      session: data.session,
+      session: {
+        access_token: session.access_token,
+        refresh_token: session.refresh_token ?? "",
+      },
       user: {
         id: data.user?.id,
         email: data.user?.email,
@@ -107,7 +142,7 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.post("/auth/password-reset", async (request) => {
     const { email } = passwordResetSchema.parse(request.body);
-    const { error } = await supabase.auth.resetPasswordForEmail(email);
+    const { error } = await supabaseAnonServer.auth.resetPasswordForEmail(email);
     if (error) throw new AuthError(error.message);
     return { success: true };
   });
@@ -118,13 +153,32 @@ export async function authRoutes(app: FastifyInstance) {
 
     const { data: profile, error } = await supabaseAdmin
       .from("users")
-      .select("*")
+      .select("id, email, company_name")
       .eq("id", user.id)
-      .single();
+      .maybeSingle();
 
     if (error) throw error;
 
-    return profile;
+    if (profile) return profile;
+
+    const { error: upsertError } = await supabaseAdmin.from("users").upsert(
+      {
+        id: user.id,
+        email: user.email ?? "",
+        auth_id: user.id,
+        company_name: null,
+      },
+      { onConflict: "id", ignoreDuplicates: true }
+    );
+    if (upsertError && !String(upsertError.message).includes("users_email_key")) {
+      throw upsertError;
+    }
+
+    return {
+      id: user.id,
+      email: user.email ?? "",
+      company_name: null,
+    };
   });
 
   app.patch("/auth/profile", { preHandler: authenticate }, async (request) => {

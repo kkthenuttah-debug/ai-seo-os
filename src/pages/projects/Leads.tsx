@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -40,6 +41,9 @@ import {
   Clock,
   Star
 } from "lucide-react";
+import { leadsService, type LeadFromApi } from "@/services/leads";
+import { formatDistanceToNow } from "date-fns";
+import { useNotification } from "@/hooks/useNotification";
 
 interface Lead {
   id: string;
@@ -51,129 +55,29 @@ interface Lead {
   capturedDate: string;
   status: "not_contacted" | "contacted" | "converted";
   message?: string;
+  tags: string[];
   location?: string;
   utmSource?: string;
   utmMedium?: string;
-  utmCampaign?: string;
-  tags: string[];
-  assignedTo?: string;
-  notes?: string;
-  lastContactDate?: string;
-  conversionValue?: number;
 }
 
-const mockLeads: Lead[] = [
-  {
-    id: "1",
-    name: "Sarah Johnson",
-    email: "sarah.johnson@email.com",
-    phone: "+1 (555) 123-4567",
-    sourcePage: "Ultimate Guide to Urban Gardening",
-    sourcePageUrl: "/urban-gardening-guide",
-    capturedDate: "2024-01-15T10:30:00Z",
-    status: "converted",
-    message: "I'm interested in starting an urban garden on my apartment balcony. Looking for expert advice and product recommendations.",
-    location: "New York, NY",
-    utmSource: "google",
-    utmMedium: "organic",
-    utmCampaign: "urban_gardening",
-    tags: ["hot_lead", "apartment", "balcony"],
-    assignedTo: "John Smith",
-    notes: "Very interested customer. Follow up with product catalog.",
-    lastContactDate: "2024-01-16T14:00:00Z",
-    conversionValue: 299.99
-  },
-  {
-    id: "2",
-    name: "Mike Chen",
-    email: "mike.chen@email.com",
-    sourcePage: "Balcony Composting Guide",
-    sourcePageUrl: "/balcony-composting-guide",
-    capturedDate: "2024-01-14T15:45:00Z",
-    status: "contacted",
-    message: "Need help setting up a composting system for my small balcony space.",
-    location: "San Francisco, CA",
-    utmSource: "facebook",
-    utmMedium: "social",
-    utmCampaign: "composting_content",
-    tags: ["medium_priority", "balcony", "composting"],
-    assignedTo: "Jane Doe",
-    notes: "Sent initial email with basic setup guide.",
-    lastContactDate: "2024-01-15T09:30:00Z"
-  },
-  {
-    id: "3",
-    name: "Emma Rodriguez",
-    email: "emma.rodriguez@email.com",
-    phone: "+1 (555) 987-6543",
-    sourcePage: "Best Vegetables for Container Gardens",
-    sourcePageUrl: "/container-gardening-tips",
-    capturedDate: "2024-01-13T11:20:00Z",
-    status: "not_contacted",
-    message: "I have a rooftop space and want to grow vegetables. What are the best options?",
-    location: "Chicago, IL",
-    utmSource: "pinterest",
-    utmMedium: "social",
-    utmCampaign: "vegetable_gardening",
-    tags: ["new_lead", "rooftop", "vegetables"],
-    assignedTo: "John Smith",
-    notes: "New lead - priority follow-up needed."
-  },
-  {
-    id: "4",
-    name: "David Wilson",
-    email: "david.wilson@email.com",
-    sourcePage: "Indoor Herb Garden Setup",
-    sourcePageUrl: "/indoor-herb-garden-setup",
-    capturedDate: "2024-01-12T16:10:00Z",
-    status: "contacted",
-    message: "Interested in starting an indoor herb garden in my kitchen. Looking for beginner advice.",
-    location: "Austin, TX",
-    utmSource: "google",
-    utmMedium: "organic",
-    utmCampaign: "herb_gardening",
-    tags: ["beginner", "indoor", "herbs"],
-    assignedTo: "Jane Doe",
-    notes: "Provided beginner's guide PDF."
-  },
-  {
-    id: "5",
-    name: "Lisa Thompson",
-    email: "lisa.thompson@email.com",
-    phone: "+1 (555) 456-7890",
-    sourcePage: "Vertical Gardening Ideas",
-    sourcePageUrl: "/vertical-gardening-ideas",
-    capturedDate: "2024-01-11T13:25:00Z",
-    status: "converted",
-    message: "I have limited ground space but lots of wall space. Vertical gardening seems perfect for me!",
-    location: "Seattle, WA",
-    utmSource: "instagram",
-    utmMedium: "social",
-    utmCampaign: "vertical_gardening",
-    tags: ["converted", "vertical", "wall_space"],
-    assignedTo: "John Smith",
-    notes: "Purchased vertical garden kit. Very satisfied customer.",
-    lastContactDate: "2024-01-14T16:45:00Z",
-    conversionValue: 189.99
-  },
-  {
-    id: "6",
-    name: "Robert Garcia",
-    email: "robert.garcia@email.com",
-    sourcePage: "Small Space Gardening",
-    sourcePageUrl: "/small-space-gardening",
-    capturedDate: "2024-01-10T09:15:00Z",
-    status: "not_contacted",
-    message: "Living in a studio apartment. What are my options for growing plants?",
-    location: "Miami, FL",
-    utmSource: "google",
-    utmMedium: "organic",
-    utmCampaign: "small_space",
-    tags: ["studio", "limited_space", "plants"],
-    assignedTo: "Jane Doe",
-    notes: "High priority - studio apartment dweller."
-  }
-];
+function mapLead(l: LeadFromApi): Lead {
+  const s = l.status?.toLowerCase();
+  const status: Lead["status"] =
+    s === "converted" ? "converted" : s === "contacted" || s === "qualified" ? "contacted" : "not_contacted";
+  return {
+    id: l.id,
+    name: l.name ?? l.email,
+    email: l.email,
+    phone: l.phone ?? undefined,
+    sourcePage: l.source_page ?? "—",
+    sourcePageUrl: l.source_url ?? l.source_page ?? "",
+    capturedDate: l.captured_at,
+    status,
+    message: l.message ?? undefined,
+    tags: [],
+  };
+}
 
 const statusColors = {
   not_contacted: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300",
@@ -188,7 +92,9 @@ const statusIcons = {
 };
 
 export default function Leads() {
-  const [leads, setLeads] = useState<Lead[]>(mockLeads);
+  const { projectId } = useParams<{ projectId: string }>();
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [sortBy, setSortBy] = useState<string>("newest");
@@ -197,6 +103,25 @@ export default function Leads() {
   const [leadToDelete, setLeadToDelete] = useState<string | null>(null);
   const [showLeadDetail, setShowLeadDetail] = useState(false);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+  const { showError } = useNotification();
+
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    setLoading(true);
+    leadsService
+      .list(projectId, { limit: 100 })
+      .then((res) => {
+        if (!cancelled) setLeads(res.leads.map(mapLead));
+      })
+      .catch((err) => {
+        if (!cancelled) showError(err instanceof Error ? err.message : "Failed to load leads");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [projectId, showError]);
 
   const filteredLeads = leads
     .filter(lead => {
@@ -564,7 +489,20 @@ export default function Leads() {
                 </tr>
               </thead>
               <tbody>
-                {filteredLeads.map((lead) => (
+                {loading ? (
+                  <tr>
+                    <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                      Loading leads…
+                    </td>
+                  </tr>
+                ) : filteredLeads.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                      No leads yet.
+                    </td>
+                  </tr>
+                ) : (
+                filteredLeads.map((lead) => (
                   <tr key={lead.id} className="border-b hover:bg-muted/50">
                     <td className="p-4">
                       <Checkbox
@@ -671,7 +609,8 @@ export default function Leads() {
                       </DropdownMenu>
                     </td>
                   </tr>
-                ))}
+                ))
+                )}
               </tbody>
             </table>
           </div>

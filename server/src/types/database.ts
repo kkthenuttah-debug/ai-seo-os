@@ -6,19 +6,30 @@
 // ENUM TYPES
 // ============================================================================
 
-export type ProjectStatus = 'active' | 'paused' | 'archived';
+export type ProjectStatus =
+  | 'active'
+  | 'paused'
+  | 'archived'
+  | 'building'
+  | 'configuring'
+  | 'draft'
+  | 'publishing'
+  | 'live'
+  | 'optimizing'
+  | 'error';
 
 export type IntegrationType = 'gsc' | 'wordpress' | 'elementor' | 'rankmath' | 'yoast';
 
 export type IntegrationStatus = 'active' | 'inactive' | 'error';
 
-export type PageStatus = 'draft' | 'published' | 'optimized';
+export type PageStatus = 'draft' | 'published' | 'optimized' | 'optimizing' | 'ready' | 'publishing' | 'error';
 
 export type PublishStatus = 'pending' | 'published' | 'failed';
 
 export type AgentType =
   | 'market_research'
   | 'site_arch'
+  | 'site_architect'
   | 'internal_linker'
   | 'elementor_builder'
   | 'content_builder'
@@ -179,6 +190,7 @@ export interface Page {
   title: string;
   slug: string;
   content: string | null;
+  content_type: string | null;
   meta_title: string | null;
   meta_description: string | null;
   meta_keywords: string | null;
@@ -194,6 +206,7 @@ export interface Page {
 
 export type PageInsert = Omit<Page, 'id' | 'created_at' | 'updated_at'> & {
   id?: string;
+  content_type?: string | null;
   elementor_data?: ElementorData;
   internal_links?: string[];
   status?: PageStatus;
@@ -364,6 +377,34 @@ export type LogInsert = Omit<Log, 'id' | 'created_at'> & {
 
 export type LogUpdate = Partial<Omit<Log, 'id' | 'created_at'>>;
 
+/**
+ * Table: monitor_runs
+ * Description: Monitor agent run results (health score, alerts, trends, recommendations)
+ */
+export interface MonitorRun {
+  id: string;
+  project_id: string;
+  health_score: number | null;
+  result: MonitorRunResult;
+  created_at: string;
+}
+
+export interface MonitorRunResult {
+  rankings?: Array<{ keyword?: string; position?: number; previousPosition?: number | null; change?: number; url?: string; pageId?: string }>;
+  trends?: Array<{ metric?: string; direction?: 'up' | 'down' | 'stable'; changePercentage?: number; analysis?: string }>;
+  alerts?: Array<{ type?: 'warning' | 'critical' | 'info'; message?: string; pageId?: string; keyword?: string; actionRequired?: boolean }>;
+  recommendations?: Array<{ type?: string; pageId?: string; suggestion?: string; priority?: 'high' | 'medium' | 'low' }>;
+  optimization_candidates?: Array<{ page_slug: string; priority: 'high' | 'medium' | 'low'; reason?: string }>;
+  health_score?: number;
+}
+
+export type MonitorRunInsert = Omit<MonitorRun, 'id' | 'created_at'> & {
+  id?: string;
+  result?: MonitorRunResult;
+};
+
+export type MonitorRunUpdate = Partial<Omit<MonitorRun, 'id' | 'created_at'>>;
+
 // ============================================================================
 // VIEW TYPES
 // ============================================================================
@@ -478,6 +519,11 @@ export type Database = {
         Row: Log;
         Insert: LogInsert;
         Update: LogUpdate;
+      };
+      monitor_runs: {
+        Row: MonitorRun;
+        Insert: MonitorRunInsert;
+        Update: MonitorRunUpdate;
       };
     };
     Views: {

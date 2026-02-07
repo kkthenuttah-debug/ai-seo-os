@@ -11,15 +11,26 @@ const inputSchema = z.object({
     categories: z.array(z.string()).optional(),
     tags: z.array(z.string()).optional(),
   }).optional(),
+  page_title: z.string().optional(),
+  page_slug: z.string().optional(),
+  content_html: z.string().nullable().optional(),
+  meta_title: z.string().nullable().optional(),
+  meta_description: z.string().nullable().optional(),
+  target_keyword: z.string().optional(),
 });
 
 const outputSchema = z.object({
-  published: z.boolean(),
-  postId: z.number(),
-  url: z.string(),
-  publishedAt: z.string(),
-  status: z.string(),
-  errors: z.array(z.string()).optional(),
+  published: z.boolean().optional().default(false),
+  postId: z.number().optional().default(0),
+  url: z.string().optional().default(''),
+  publishedAt: z.string().optional().default(''),
+  status: z.string().optional().default('draft'),
+  errors: z.array(z.string()).optional().default([]),
+  // Pre-publish check shape (orchestrator uses these)
+  publish_ready: z.boolean().optional().default(true),
+  seo_checklist: z.record(z.unknown()).optional(),
+  final_meta_title: z.string().optional(),
+  final_meta_description: z.string().optional(),
 });
 
 const SYSTEM_PROMPT = `You are an expert WordPress publishing coordinator with knowledge of content management best practices.

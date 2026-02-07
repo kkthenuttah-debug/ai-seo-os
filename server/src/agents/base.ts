@@ -21,7 +21,8 @@ export abstract class BaseAgent<TInput, TOutput> {
   async run(projectId: string, input: TInput, options?: Partial<AgentRunOptions>): Promise<TOutput> {
     const runId = nanoid();
     const correlationId = options?.correlationId || nanoid();
-    
+    let agentRun: { id: string } | null = null;
+
     this.log.info({
       runId,
       correlationId,
@@ -31,7 +32,7 @@ export abstract class BaseAgent<TInput, TOutput> {
     try {
       const validatedInput = this.config.inputSchema.parse(input);
 
-      const agentRun = await createAgentRun({
+      agentRun = await createAgentRun({
         project_id: projectId,
         agent_type: this.config.type,
         status: 'running' as AgentRunStatus,
@@ -51,6 +52,7 @@ export abstract class BaseAgent<TInput, TOutput> {
         userPrompt,
         maxTokens: this.config.maxTokens,
         temperature: this.config.temperature,
+        timeoutMs: this.config.timeout,
         maxRetries: 3,
       });
 
@@ -59,7 +61,7 @@ export abstract class BaseAgent<TInput, TOutput> {
       const duration = Date.now() - startTime;
       const metrics = metricsCollector.getMetrics(runId);
 
-      await updateAgentRun(agentRun.id, {
+      await updateAgentRun(agentRun!.id, {
         status: 'completed' as AgentRunStatus,
         output: validatedOutput as object,
         tokens_used: metrics?.tokensUsed || 0,
@@ -105,27 +107,28 @@ export abstract class BaseAgent<TInput, TOutput> {
       }, 'Agent run failed');
 
       try {
-        await updateAgentRun(runId, {
-          status: 'failed' as AgentRunStatus,
-          error: errorMessage,
-          duration_ms: duration,
-          completed_at: new Date().toISOString(),
-        });
+        if (agentRun?.id) {
+          await updateAgentRun(agentRun.id, {
+            status: 'failed' as AgentRunStatus,
+            error: errorMessage,
+            duration_ms: duration,
+            completed_at: new Date().toISOString(),
+          });
 
+          await createLog({
+            project_id: projectId,
+            agent_run_id: agentRun.id,
+            level: 'error',
+            message: `${this.config.name} failed`,
+            data: { error: errorMessage, correlationId },
+          });
+        }
         metricsCollector.completeRun(runId, {
           tokensUsed: 0,
           cost: 0,
           model: '',
           status: 'failed',
           error: errorMessage,
-        });
-
-        await createLog({
-          project_id: projectId,
-          agent_run_id: runId,
-          level: 'error',
-          message: `${this.config.name} failed`,
-          data: { error: errorMessage, correlationId },
         });
       } catch (updateError) {
         this.log.error({

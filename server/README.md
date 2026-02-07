@@ -53,6 +53,21 @@ server/src/
 - Supabase account
 - Google Gemini API key
 
+### Starting Redis
+
+The server and workers need Redis for job queues. On Windows, use **127.0.0.1** in `REDIS_URL` (not `localhost`) to avoid IPv6 connection errors.
+
+**Option A – Docker (recommended):**
+```bash
+docker run -d --name redis -p 6379:6379 redis:alpine
+```
+
+**Option B – Redis on Windows:**  
+Install [Redis for Windows](https://github.com/microsoftarchive/redis/releases) or use WSL and run `redis-server`. Set `REDIS_URL=redis://127.0.0.1:6379` in `server/.env`.
+
+**Option C – Cloud Redis:**  
+Use a hosted Redis (e.g. Upstash, Redis Cloud) and set `REDIS_URL` to the provider’s URL.
+
 ### Installation
 
 1. Install dependencies:

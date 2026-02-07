@@ -3,8 +3,8 @@ import { BaseAgent } from './base.js';
 import type { MarketResearchInput, MarketResearchOutput } from '../types/index.js';
 
 const inputSchema = z.object({
-  niche: z.string().min(1),
-  target_audience: z.string().min(1),
+  niche: z.string().min(1, 'Niche is required').or(z.literal('').transform(() => 'General')),
+  target_audience: z.string().min(1, 'Target audience is required').or(z.literal('').transform(() => 'General audience')),
   competitors: z.array(z.string()).optional(),
 });
 
@@ -25,7 +25,7 @@ const outputSchema = z.object({
   }),
   keyword_opportunities: z.array(z.object({
     keyword: z.string(),
-    intent: z.enum(['informational', 'transactional', 'navigational']),
+    intent: z.enum(['informational', 'transactional', 'navigational', 'commercial']),
     difficulty: z.enum(['low', 'medium', 'high']),
     potential: z.enum(['low', 'medium', 'high']),
   })),
@@ -65,7 +65,7 @@ Your output MUST be a valid JSON object matching this structure:
   "keyword_opportunities": [
     {
       "keyword": "keyword phrase",
-      "intent": "informational|transactional|navigational",
+      "intent": "informational|transactional|navigational|commercial",
       "difficulty": "low|medium|high",
       "potential": "low|medium|high"
     }

@@ -26,9 +26,9 @@ const updatePageSchema = z.object({
 });
 
 const listPagesSchema = z.object({
-  status: z.enum(['draft', 'published', 'optimized']).optional(),
+  status: z.enum(['draft', 'published', 'optimized', 'ready']).optional(),
   search: z.string().optional(),
-  limit: z.coerce.number().int().positive().max(100).default(20),
+  limit: z.coerce.number().int().positive().max(500).default(20),
   offset: z.coerce.number().int().min(0).default(0),
   sort: z.enum(['created_at', 'updated_at', 'title']).default('updated_at'),
 });
@@ -139,7 +139,9 @@ export async function pagesRoutes(app: FastifyInstance) {
       const { projectId, pageId } = request.params as { projectId: string; pageId: string };
       const body = updatePageSchema.parse(request.body);
 
-      const updateData: Record<string, unknown> = {};
+      const updateData: Record<string, unknown> = {
+        updated_at: new Date().toISOString(),
+      };
       if (body.title !== undefined) updateData.title = body.title;
       if (body.slug !== undefined) updateData.slug = body.slug;
       if (body.content !== undefined) updateData.content = body.content;
@@ -244,14 +246,16 @@ export async function pagesRoutes(app: FastifyInstance) {
       const wordpressPostId = Math.floor(Math.random() * 100000); // Mock ID
       const wordpressUrl = `${wpIntegration.data?.site_url || ''}/${page.slug}`;
 
-      // Update page with publish status
+      // Update page with publish status and all related columns
+      const now = new Date().toISOString();
       const { data: updatedPage, error: updateError } = await supabaseAdmin
         .from('pages')
         .update({
           status: 'published',
           publish_status: 'published',
           wordpress_post_id: wordpressPostId,
-          published_at: new Date().toISOString(),
+          published_at: now,
+          updated_at: now,
         })
         .eq('id', pageId)
         .select()
@@ -284,7 +288,7 @@ export async function pagesRoutes(app: FastifyInstance) {
 
       const { data, error } = await supabaseAdmin
         .from('pages')
-        .update({ elementor_data: body.elementorData })
+        .update({ elementor_data: body.elementorData, updated_at: new Date().toISOString() })
         .eq('id', pageId)
         .eq('project_id', projectId)
         .select()

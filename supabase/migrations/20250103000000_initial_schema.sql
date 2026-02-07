@@ -7,41 +7,55 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ============================================================================
--- ENUM TYPES
+-- ENUM TYPES (idempotent: skip if already exists)
 -- ============================================================================
 
--- Project status enum
-CREATE TYPE project_status AS ENUM ('active', 'paused', 'archived');
+DO $$ BEGIN
+  CREATE TYPE project_status AS ENUM ('active', 'paused', 'archived');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
--- Integration type enum
-CREATE TYPE integration_type AS ENUM ('gsc', 'wordpress', 'elementor', 'rankmath', 'yoast');
+DO $$ BEGIN
+  CREATE TYPE integration_type AS ENUM ('gsc', 'wordpress', 'elementor', 'rankmath', 'yoast');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
--- Page status enum
-CREATE TYPE page_status AS ENUM ('draft', 'published', 'optimized');
+DO $$ BEGIN
+  CREATE TYPE page_status AS ENUM ('draft', 'published', 'optimized');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
--- Page publish status enum
-CREATE TYPE publish_status AS ENUM ('pending', 'published', 'failed');
+DO $$ BEGIN
+  CREATE TYPE publish_status AS ENUM ('pending', 'published', 'failed');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
--- Agent type enum
-CREATE TYPE agent_type AS ENUM (
-  'market_research',
-  'site_arch',
-  'internal_linker',
-  'elementor_builder',
-  'content_builder',
-  'page_builder',
-  'fixer',
-  'technical_seo',
-  'monitor',
-  'optimizer',
-  'publisher'
-);
+DO $$ BEGIN
+  CREATE TYPE agent_type AS ENUM (
+    'market_research',
+    'site_arch',
+    'internal_linker',
+    'elementor_builder',
+    'content_builder',
+    'page_builder',
+    'fixer',
+    'technical_seo',
+    'monitor',
+    'optimizer',
+    'publisher'
+  );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
--- Agent run status enum
-CREATE TYPE agent_run_status AS ENUM ('pending', 'running', 'completed', 'failed');
+DO $$ BEGIN
+  CREATE TYPE agent_run_status AS ENUM ('pending', 'running', 'completed', 'failed');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
--- Log level enum
-CREATE TYPE log_level AS ENUM ('debug', 'info', 'warn', 'error');
+DO $$ BEGIN
+  CREATE TYPE log_level AS ENUM ('debug', 'info', 'warn', 'error');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================================
 -- TABLES
@@ -51,7 +65,7 @@ CREATE TYPE log_level AS ENUM ('debug', 'info', 'warn', 'error');
 -- Table: users
 -- Description: Application users linked to Supabase Auth
 -- ----------------------------------------------------------------------------
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     email TEXT NOT NULL UNIQUE,
     auth_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -68,7 +82,7 @@ COMMENT ON COLUMN users.company_name IS 'User organization or company name';
 -- Table: projects
 -- Description: SEO projects owned by users
 -- ----------------------------------------------------------------------------
-CREATE TABLE projects (
+CREATE TABLE IF NOT EXISTS projects (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
@@ -90,7 +104,7 @@ COMMENT ON COLUMN projects.settings IS 'Project configuration settings as JSON';
 -- Table: integrations
 -- Description: Third-party service integrations for projects
 -- ----------------------------------------------------------------------------
-CREATE TABLE integrations (
+CREATE TABLE IF NOT EXISTS integrations (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     type integration_type NOT NULL,
@@ -113,7 +127,7 @@ COMMENT ON COLUMN integrations.data IS 'Integration-specific configuration and m
 -- Table: pages
 -- Description: Website pages/content within projects
 -- ----------------------------------------------------------------------------
-CREATE TABLE pages (
+CREATE TABLE IF NOT EXISTS pages (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
@@ -140,7 +154,7 @@ COMMENT ON COLUMN pages.wordpress_post_id IS 'WordPress post ID after publishing
 -- Table: agent_runs
 -- Description: AI agent execution tracking
 -- ----------------------------------------------------------------------------
-CREATE TABLE agent_runs (
+CREATE TABLE IF NOT EXISTS agent_runs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     agent_type agent_type NOT NULL,
@@ -166,7 +180,7 @@ COMMENT ON COLUMN agent_runs.tokens_used IS 'Number of LLM tokens consumed';
 -- Table: gsc_snapshots
 -- Description: Google Search Console data snapshots
 -- ----------------------------------------------------------------------------
-CREATE TABLE gsc_snapshots (
+CREATE TABLE IF NOT EXISTS gsc_snapshots (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     query TEXT,
@@ -192,7 +206,7 @@ COMMENT ON COLUMN gsc_snapshots.position IS 'Average search position';
 -- Table: rankings
 -- Description: Keyword ranking tracking
 -- ----------------------------------------------------------------------------
-CREATE TABLE rankings (
+CREATE TABLE IF NOT EXISTS rankings (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     page_id UUID REFERENCES pages(id) ON DELETE SET NULL,
@@ -214,7 +228,7 @@ COMMENT ON COLUMN rankings.difficulty IS 'Keyword difficulty score (0-100)';
 -- Table: leads
 -- Description: Captured leads from website forms
 -- ----------------------------------------------------------------------------
-CREATE TABLE leads (
+CREATE TABLE IF NOT EXISTS leads (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     email TEXT NOT NULL,
@@ -235,7 +249,7 @@ COMMENT ON COLUMN leads.data IS 'Additional lead data as JSON';
 -- Table: logs
 -- Description: System and application logs
 -- ----------------------------------------------------------------------------
-CREATE TABLE logs (
+CREATE TABLE IF NOT EXISTS logs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
     agent_run_id UUID REFERENCES agent_runs(id) ON DELETE SET NULL,
@@ -251,63 +265,63 @@ COMMENT ON COLUMN logs.service IS 'Service or component that generated the log';
 COMMENT ON COLUMN logs.metadata IS 'Additional log context as JSON';
 
 -- ============================================================================
--- INDEXES
+-- INDEXES (idempotent)
 -- ============================================================================
 
 -- Users indexes
-CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_users_auth_id ON users(auth_id);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_auth_id ON users(auth_id);
 
 -- Projects indexes
-CREATE INDEX idx_projects_user_id ON projects(user_id);
-CREATE INDEX idx_projects_status ON projects(status);
-CREATE INDEX idx_projects_created_at ON projects(created_at);
+CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id);
+CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+CREATE INDEX IF NOT EXISTS idx_projects_created_at ON projects(created_at);
 
 -- Integrations indexes
-CREATE INDEX idx_integrations_project_id ON integrations(project_id);
-CREATE INDEX idx_integrations_type ON integrations(type);
-CREATE INDEX idx_integrations_status ON integrations(status);
+CREATE INDEX IF NOT EXISTS idx_integrations_project_id ON integrations(project_id);
+CREATE INDEX IF NOT EXISTS idx_integrations_type ON integrations(type);
+CREATE INDEX IF NOT EXISTS idx_integrations_status ON integrations(status);
 
 -- Pages indexes
-CREATE INDEX idx_pages_project_id ON pages(project_id);
-CREATE INDEX idx_pages_status ON pages(status);
-CREATE INDEX idx_pages_publish_status ON pages(publish_status);
-CREATE INDEX idx_pages_slug ON pages(slug);
-CREATE INDEX idx_pages_wordpress_post_id ON pages(wordpress_post_id);
-CREATE INDEX idx_pages_created_at ON pages(created_at);
+CREATE INDEX IF NOT EXISTS idx_pages_project_id ON pages(project_id);
+CREATE INDEX IF NOT EXISTS idx_pages_status ON pages(status);
+CREATE INDEX IF NOT EXISTS idx_pages_publish_status ON pages(publish_status);
+CREATE INDEX IF NOT EXISTS idx_pages_slug ON pages(slug);
+CREATE INDEX IF NOT EXISTS idx_pages_wordpress_post_id ON pages(wordpress_post_id);
+CREATE INDEX IF NOT EXISTS idx_pages_created_at ON pages(created_at);
 
 -- Agent runs indexes
-CREATE INDEX idx_agent_runs_project_id ON agent_runs(project_id);
-CREATE INDEX idx_agent_runs_agent_type ON agent_runs(agent_type);
-CREATE INDEX idx_agent_runs_status ON agent_runs(status);
-CREATE INDEX idx_agent_runs_created_at ON agent_runs(created_at);
-CREATE INDEX idx_agent_runs_completed_at ON agent_runs(completed_at);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_project_id ON agent_runs(project_id);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_agent_type ON agent_runs(agent_type);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_created_at ON agent_runs(created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_completed_at ON agent_runs(completed_at);
 
 -- GSC snapshots indexes
-CREATE INDEX idx_gsc_snapshots_project_id ON gsc_snapshots(project_id);
-CREATE INDEX idx_gsc_snapshots_snapshot_date ON gsc_snapshots(snapshot_date);
-CREATE INDEX idx_gsc_snapshots_query ON gsc_snapshots(query);
-CREATE INDEX idx_gsc_snapshots_page ON gsc_snapshots(page);
-CREATE INDEX idx_gsc_snapshots_project_date ON gsc_snapshots(project_id, snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_gsc_snapshots_project_id ON gsc_snapshots(project_id);
+CREATE INDEX IF NOT EXISTS idx_gsc_snapshots_snapshot_date ON gsc_snapshots(snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_gsc_snapshots_query ON gsc_snapshots(query);
+CREATE INDEX IF NOT EXISTS idx_gsc_snapshots_page ON gsc_snapshots(page);
+CREATE INDEX IF NOT EXISTS idx_gsc_snapshots_project_date ON gsc_snapshots(project_id, snapshot_date);
 
 -- Rankings indexes
-CREATE INDEX idx_rankings_project_id ON rankings(project_id);
-CREATE INDEX idx_rankings_page_id ON rankings(page_id);
-CREATE INDEX idx_rankings_keyword ON rankings(keyword);
-CREATE INDEX idx_rankings_tracked_at ON rankings(tracked_at);
+CREATE INDEX IF NOT EXISTS idx_rankings_project_id ON rankings(project_id);
+CREATE INDEX IF NOT EXISTS idx_rankings_page_id ON rankings(page_id);
+CREATE INDEX IF NOT EXISTS idx_rankings_keyword ON rankings(keyword);
+CREATE INDEX IF NOT EXISTS idx_rankings_tracked_at ON rankings(tracked_at);
 
 -- Leads indexes
-CREATE INDEX idx_leads_project_id ON leads(project_id);
-CREATE INDEX idx_leads_email ON leads(email);
-CREATE INDEX idx_leads_source_page_id ON leads(source_page_id);
-CREATE INDEX idx_leads_captured_at ON leads(captured_at);
+CREATE INDEX IF NOT EXISTS idx_leads_project_id ON leads(project_id);
+CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email);
+CREATE INDEX IF NOT EXISTS idx_leads_source_page_id ON leads(source_page_id);
+CREATE INDEX IF NOT EXISTS idx_leads_captured_at ON leads(captured_at);
 
 -- Logs indexes
-CREATE INDEX idx_logs_project_id ON logs(project_id);
-CREATE INDEX idx_logs_level ON logs(level);
-CREATE INDEX idx_logs_service ON logs(service);
-CREATE INDEX idx_logs_created_at ON logs(created_at);
-CREATE INDEX idx_logs_project_created ON logs(project_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_logs_project_id ON logs(project_id);
+CREATE INDEX IF NOT EXISTS idx_logs_level ON logs(level);
+CREATE INDEX IF NOT EXISTS idx_logs_service ON logs(service);
+CREATE INDEX IF NOT EXISTS idx_logs_created_at ON logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_logs_project_created ON logs(project_id, created_at);
 
 -- ============================================================================
 -- TRIGGERS FOR UPDATED_AT
@@ -478,7 +492,7 @@ CREATE POLICY "Users can view project logs" ON logs
 -- ============================================================================
 
 -- Project health summary view
-CREATE VIEW project_health_summary AS
+CREATE OR REPLACE VIEW project_health_summary AS
 SELECT 
     p.id AS project_id,
     p.name AS project_name,
@@ -500,7 +514,7 @@ LEFT JOIN gsc_snapshots gs ON gs.project_id = p.id
 GROUP BY p.id, p.name, p.domain, p.status;
 
 -- Agent performance view
-CREATE VIEW agent_performance_summary AS
+CREATE OR REPLACE VIEW agent_performance_summary AS
 SELECT 
     agent_type,
     status,

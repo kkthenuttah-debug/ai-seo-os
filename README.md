@@ -1,50 +1,106 @@
-# React + TypeScript + Vite
+# AI SEO OS
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Automated SEO platform: AI-powered content generation, rankings tracking, lead capture, and WordPress publishing.
 
-Currently, two official plugins are available:
+## Features Overview
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **Projects & pages** – Manage sites, create and edit pages with rich content and Elementor-style layout
+- **AI agents** – Market research, site architecture, content building, technical SEO, optimization, publishing (Gemini)
+- **Rankings** – Sync with Google Search Console, track keywords, history and insights
+- **Leads** – Capture, filter, export; optional webhooks for form submissions
+- **Analytics** – Traffic, keywords, and page performance from GSC
+- **Integrations** – WordPress REST API, GSC OAuth, configurable webhooks
+- **Queue workers** – Background jobs for agent runs, publish, and sync
 
-## Expanding the ESLint configuration
+## Tech Stack
 
-If you are developing a production application, we recommend updating the configuration to enable type aware lint rules:
+| Layer      | Stack |
+|-----------|--------|
+| Frontend  | React 18, Vite 6, Tailwind CSS, React Router, TanStack Query |
+| Backend   | Fastify, TypeScript, Zod |
+| Database  | Supabase (Postgres + Auth) |
+| Queues    | BullMQ, Redis |
+| AI        | Google Gemini API |
 
-- Configure the top-level `parserOptions` property like this:
+## Quick Start (Local Development)
 
-```js
-export default tseslint.config({
-  languageOptions: {
-    // other options...
-    parserOptions: {
-      project: ['./tsconfig.node.json', './tsconfig.app.json'],
-      tsconfigRootDir: import.meta.dirname,
-    },
-  },
-})
+1. **Clone and install**
+   ```bash
+   git clone <repo-url>
+   cd ai-seo-os
+   npm install
+   cd server && npm install && cd ..
+   ```
+
+2. **Environment**
+   ```bash
+   cp .env.example .env
+   # Edit .env: SUPABASE_*, GEMINI_API_KEY, REDIS_URL, JWT_SECRET, etc.
+   ```
+
+3. **Redis** (required for queues)
+   ```bash
+   # macOS: brew install redis && redis-server
+   # Windows: use WSL or a Redis build
+   ```
+
+4. **Run**
+   - Backend: `cd server && npm run dev` (API on http://localhost:3001)
+   - Frontend: `npm run dev` (app on http://localhost:5173)
+   - Workers: `cd server && npm run worker` (optional)
+
+## Docker
+
+```bash
+cp .env.example .env
+# Fill in Supabase, Gemini, Google, JWT in .env
+
+docker-compose up -d
+# Frontend: http://localhost:3000
+# Backend:  http://localhost:3001
 ```
 
-- Replace `tseslint.configs.recommended` to `tseslint.configs.recommendedTypeChecked` or `tseslint.configs.strictTypeChecked`
-- Optionally add `...tseslint.configs.stylisticTypeChecked`
-- Install [eslint-plugin-react](https://github.com/jsx-eslint/eslint-plugin-react) and update the config:
+## Deployment
 
-```js
-// eslint.config.js
-import react from 'eslint-plugin-react'
+- **Frontend:** Vercel – connect repo, set `VITE_API_URL`, build command `npm run build`, output `dist`. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- **Backend:** Railway or Render – use `server/Dockerfile` or `npm run build` + `node dist/index.js`; set env vars and health check `/health`. Run workers separately.
+- **CI/CD:** GitHub Actions in `.github/workflows/` (lint/test on push and PR; deploy on push to `main` when secrets are set).
 
-export default tseslint.config({
-  // Set the react version
-  settings: { react: { version: '18.3' } },
-  plugins: {
-    // Add the react plugin
-    react,
-  },
-  rules: {
-    // other rules...
-    // Enable its recommended rules
-    ...react.configs.recommended.rules,
-    ...react.configs['jsx-runtime'].rules,
-  },
-})
+## Documentation
+
+| Doc | Description |
+|-----|-------------|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, services, data flow, agents, queues |
+| [docs/API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md) | Auth, endpoints, request/response, errors, rate limits |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Env vars, local/Docker/cloud, health, monitoring |
+| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Dev setup, code style, testing, PR process |
+| [docs/AGENT_DEVELOPMENT.md](docs/AGENT_DEVELOPMENT.md) | How to add and test new AI agents |
+| [API_ROUTES_SUMMARY.md](API_ROUTES_SUMMARY.md) | Route list and service summary |
+
+## Project Structure
+
 ```
+.
+├── src/                 # Frontend (React, Vite)
+├── server/              # Backend API and workers
+│   ├── src/
+│   │   ├── agents/      # AI agents (Gemini)
+│   │   ├── routes/     # API routes
+│   │   ├── services/   # Business logic
+│   │   ├── queues/     # BullMQ queues
+│   │   └── workers/    # Job handlers
+│   └── Dockerfile
+├── docs/                # Architecture, API, deployment, contributing
+├── scripts/             # setup, migrate, seed
+├── docker-compose.yml
+├── Dockerfile           # Frontend
+└── .env.example
+```
+
+## Contributing
+
+See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for setup, code style, testing, and pull request process.
+
+## Support
+
+Open an issue for bugs or feature requests. For deployment and configuration, refer to [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).

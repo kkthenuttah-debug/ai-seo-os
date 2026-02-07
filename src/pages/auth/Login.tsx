@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -15,6 +16,7 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 export default function Login() {
   const navigate = useNavigate();
   const { login, isLoading } = useAuth();
+  const [apiError, setApiError] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
@@ -26,8 +28,13 @@ export default function Login() {
   });
 
   const onSubmit = async (values: LoginFormValues) => {
-    await login(values.email, values.password);
-    navigate("/app/dashboard");
+    setApiError(null);
+    try {
+      await login(values.email, values.password);
+      navigate("/app/dashboard");
+    } catch (err) {
+      setApiError(err instanceof Error ? err.message : "Login failed. Please try again.");
+    }
   };
 
   return (
@@ -60,6 +67,7 @@ export default function Login() {
           Forgot password?
         </Link>
       </div>
+      {apiError ? <ErrorMessage message={apiError} /> : null}
       <Button type="submit" className="w-full" disabled={isLoading}>
         Sign in
       </Button>

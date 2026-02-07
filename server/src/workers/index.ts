@@ -1,6 +1,7 @@
 import { startAgentTaskWorker } from './agent-task.worker.js';
 import { startBuildWorker } from './build-worker.js';
 import { startPublishWorker } from './publish-worker.js';
+import { startIndexWorker } from './index-worker.js';
 import { startMonitorWorker } from './monitor-worker.js';
 import { startOptimizeWorker } from './optimize-worker.js';
 import { registerWorker } from '../services/queueManager.js';
@@ -8,8 +9,8 @@ import { logger } from '../lib/logger.js';
 
 const log = logger.child({ component: 'workers' });
 
-// Store active workers
-const workers: ReturnType<typeof startAgentTaskWorker | typeof startBuildWorker | typeof startPublishWorker | typeof startMonitorWorker | typeof startOptimizeWorker>[] = [];
+type WorkerInstance = ReturnType<typeof startAgentTaskWorker | typeof startBuildWorker | typeof startPublishWorker | typeof startIndexWorker | typeof startMonitorWorker | typeof startOptimizeWorker>;
+const workers: WorkerInstance[] = [];
 
 // Start all workers
 export async function startAllWorkers() {
@@ -30,6 +31,11 @@ export async function startAllWorkers() {
     const publishWorker = startPublishWorker();
     registerWorker('publish', publishWorker);
     workers.push(publishWorker);
+
+    // Start index worker (sitemap pings after publish)
+    const indexWorker = startIndexWorker();
+    registerWorker('index', indexWorker);
+    workers.push(indexWorker);
 
     // Start monitor worker
     const monitorWorker = startMonitorWorker();
@@ -87,6 +93,8 @@ export function startWorker(workerName: string) {
       return startBuildWorker();
     case 'publish':
       return startPublishWorker();
+    case 'index':
+      return startIndexWorker();
     case 'monitor':
       return startMonitorWorker();
     case 'optimize':

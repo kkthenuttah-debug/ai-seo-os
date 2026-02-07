@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { authRoutes } from "./auth.js";
+import { gscCallbackRoutes } from "./gscCallback.js";
 import { integrationsRoutes } from "./integrations.js";
 import { projectsRoutes } from "./projects.js";
 import { webhooksRoutes } from "./webhooks.js";
@@ -12,6 +13,7 @@ import { healthRoutes } from "./health.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(authRoutes, { prefix: "/api" });
+  await app.register(gscCallbackRoutes, { prefix: "/api" });
   await app.register(projectsRoutes, { prefix: "/api" });
   await app.register(integrationsRoutes, { prefix: "/api" });
   await app.register(webhooksRoutes, { prefix: "/api" });

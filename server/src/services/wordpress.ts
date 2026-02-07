@@ -118,7 +118,7 @@ export class WordPressService {
     };
 
     const filtered = Object.fromEntries(
-      Object.entries(payload).filter(([, value]) => value !== undefined)
+      Object.entries(payload).filter(([, value]) => value !== undefined && value !== '')
     );
 
     return Object.keys(filtered).length > 0 ? filtered : undefined;
@@ -158,7 +158,8 @@ export class WordPressService {
 
   async createPost(data: CreatePostInput): Promise<CreatePostResponse> {
     await this.ensureConnection();
-    this.log.info({ slug: data.slug }, 'Creating WordPress post');
+    const type = data.postType ?? 'page';
+    this.log.info({ slug: data.slug, type }, 'Creating WordPress content');
 
     const body: Record<string, unknown> = {
       title: data.title,
@@ -172,13 +173,14 @@ export class WordPressService {
       body.meta = meta;
     }
 
-    const createdPost = await this.request<WordPressPost>('/pages', {
+    const endpoint = type === 'post' ? '/posts' : '/pages';
+    const createdPost = await this.request<WordPressPost>(endpoint, {
       method: 'POST',
       body: JSON.stringify(body),
     });
 
     if (data.elementorData) {
-      await this.setElementorData(createdPost.id, data.elementorData);
+      await this.setElementorData(createdPost.id, data.elementorData, type);
     }
 
     this.log.info({ id: createdPost.id, slug: createdPost.slug }, 'WordPress post created');
@@ -218,7 +220,12 @@ export class WordPressService {
     return this.request<WordPressPost>(`/pages/${postId}?context=edit`);
   }
 
-  async setElementorData(postId: number, elementorData: unknown): Promise<void> {
+  private contentEndpoint(type: 'page' | 'post', postId: number): string {
+    const path = type === 'post' ? '/posts' : '/pages';
+    return `${path}/${postId}`;
+  }
+
+  async setElementorData(postId: number, elementorData: unknown, postType: 'page' | 'post' = 'page'): Promise<void> {
     await this.ensureConnection();
     this.validateElementorData(elementorData);
 
@@ -227,7 +234,7 @@ export class WordPressService {
       this.log.warn({ postId, version }, 'Elementor data version mismatch');
     }
 
-    await this.request(`/pages/${postId}`, {
+    await this.request(this.contentEndpoint(postType, postId), {
       method: 'POST',
       body: JSON.stringify({
         meta: {
@@ -294,6 +301,28 @@ export class WordPressService {
 
   async updatePostStatus(postId: number, status: 'draft' | 'published'): Promise<void> {
     await this.updatePost(postId, { status });
+  }
+
+  /** Update an existing page/post content and meta (used after optimization). */
+  async updatePage(
+    postId: number,
+    data: { content?: string; meta_title?: string; meta_description?: string },
+    postType: 'page' | 'post' = 'page'
+  ): Promise<void> {
+    await this.ensureConnection();
+    const body: Record<string, unknown> = {};
+    if (data.content !== undefined) body.content = data.content;
+    const meta = this.buildMeta({
+      metaTitle: data.meta_title,
+      metaDescription: data.meta_description ?? '',
+      metaKeywords: '',
+    });
+    if (meta) body.meta = meta;
+    await this.request(this.contentEndpoint(postType, postId), {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    this.log.debug({ postId, postType }, 'WordPress page updated');
   }
 
   async searchPages(query: string): Promise<WordPressPage[]> {

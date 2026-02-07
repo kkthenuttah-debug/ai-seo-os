@@ -220,7 +220,7 @@ export interface MarketResearchOutput {
   };
   keyword_opportunities: Array<{
     keyword: string;
-    intent: 'informational' | 'transactional' | 'navigational';
+    intent: 'informational' | 'transactional' | 'navigational' | 'commercial';
     difficulty: 'low' | 'medium' | 'high';
     potential: 'low' | 'medium' | 'high';
   }>;
@@ -270,6 +270,13 @@ export interface ContentBuilderInput {
   word_count: number;
   outline?: string[];
   internal_links?: string[];
+  /** When set, the agent must include a lead-capture form/CTA that POSTs to this webhook so leads show in the app. */
+  lead_capture?: {
+    webhook_url: string;
+    project_id: string;
+    page_id: string;
+    source_url: string;
+  };
 }
 
 export interface ContentBuilderOutput {
@@ -328,23 +335,26 @@ export interface OptimizerOutput {
   updated_meta_description?: string;
 }
 
-// Queue Job Types
+// Queue Job Types (correlation_id is added by schedule functions)
 export interface BuildJob {
   type: 'build';
   project_id: string;
   page_id?: string;
   phase: 'research' | 'architecture' | 'content' | 'elementor' | 'linking';
+  correlation_id?: string;
 }
 
 export interface PublishJob {
   type: 'publish';
   project_id: string;
   page_id: string;
+  correlation_id?: string;
 }
 
 export interface MonitorJob {
   type: 'monitor';
   project_id: string;
+  correlation_id?: string;
 }
 
 export interface OptimizeJob {
@@ -352,9 +362,16 @@ export interface OptimizeJob {
   project_id: string;
   page_id: string;
   reason: 'scheduled' | 'performance_drop' | 'manual';
+  correlation_id?: string;
 }
 
-export type QueueJob = BuildJob | PublishJob | MonitorJob | OptimizeJob;
+export interface IndexJob {
+  type: 'index';
+  project_id: string;
+  url?: string;
+}
+
+export type QueueJob = BuildJob | PublishJob | MonitorJob | OptimizeJob | IndexJob;
 
 // Database Types - Supabase schema types
 export * from './database';

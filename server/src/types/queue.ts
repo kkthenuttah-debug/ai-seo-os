@@ -39,6 +39,7 @@ export interface QueueConfig {
     agent_tasks: number;
     build: number;
     publish: number;
+    index: number;
     monitor: number;
     optimize: number;
     webhooks: number;

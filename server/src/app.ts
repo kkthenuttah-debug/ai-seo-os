@@ -27,7 +27,17 @@ export async function createApp(): Promise<FastifyInstance> {
   });
 
   await app.register(rateLimit, {
-    max: 100,
+    keyGenerator: (request) => {
+      const ip = request.ip;
+      if (request.url.includes("/auth/")) return `${ip}:auth`;
+      return ip;
+    },
+    max: (request) => {
+      if (request.url.includes("/auth/")) return 200;
+      if (request.url.includes("/agent-runs")) return 1000;
+      if (/\/api\/projects\/[^/]+(\/|$)/.test(request.url)) return 400;
+      return 100;
+    },
     timeWindow: "15 minutes",
   });
 
@@ -56,13 +66,6 @@ export async function createApp(): Promise<FastifyInstance> {
       },
       `${request.method} ${request.url}`,
     );
-  });
-
-  app.get("/health", async (request, reply) => {
-    return {
-      status: "ok",
-      timestamp: new Date().toISOString(),
-    };
   });
 
   app.setNotFoundHandler((request, reply) => {

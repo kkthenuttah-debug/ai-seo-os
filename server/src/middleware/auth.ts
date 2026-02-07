@@ -1,5 +1,5 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { supabase } from "../lib/supabase.js";
+import { getAppUserId, supabaseAdmin, supabaseAnonServer } from "../lib/supabase.js";
 import { AuthError, NotFoundError } from "../utils/errors.js";
 
 export async function authenticate(
@@ -15,7 +15,7 @@ export async function authenticate(
   const {
     data: { user },
     error,
-  } = await supabase.auth.getUser(token);
+  } = await supabaseAnonServer.auth.getUser(token);
 
   if (error || !user) {
     throw new AuthError("Invalid or expired token");
@@ -35,7 +35,7 @@ export async function verifyProjectOwnership(
     throw new AuthError("User not authenticated");
   }
 
-  const { data: project, error } = await supabase
+  const { data: project, error } = await supabaseAdmin
     .from("projects")
     .select("user_id")
     .eq("id", projectId)
@@ -45,7 +45,8 @@ export async function verifyProjectOwnership(
     throw new NotFoundError("Project not found");
   }
 
-  if (project.user_id !== user.id) {
+  const appUserId = await getAppUserId(user);
+  if (project.user_id !== appUserId) {
     throw new AuthError("You do not have permission to access this project");
   }
 }

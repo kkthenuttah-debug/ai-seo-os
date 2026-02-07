@@ -14,7 +14,7 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
 
   // Redis
-  REDIS_URL: z.string().url().default("redis://localhost:6379"),
+  REDIS_URL: z.string().url().default("redis://127.0.0.1:6379"),
 
   // Gemini AI
   GEMINI_API_KEY: z.string().min(1),
@@ -108,11 +108,11 @@ class Config {
     return this.nodeEnv === "test";
   }
 
-  // AI Model Configuration
+  // AI Model Configuration - all agents use Gemini 3 Pro Preview
   get aiConfig() {
     return {
-      strategyModel: "gemini-2.0-flash-exp",
-      executionModel: "gemini-2.0-flash-lite",
+      strategyModel: "gemini-3-pro-preview",
+      executionModel: "gemini-3-pro-preview",
       strategyMaxTokens: 2000,
       executionMaxTokens: 1000,
       strategyTimeout: 60000,

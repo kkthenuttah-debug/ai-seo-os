@@ -3,6 +3,7 @@ import { getWorkerOptions } from '../queues/config.js';
 import { logger } from '../lib/logger.js';
 import { createOrchestrator } from '../services/orchestrator.js';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { scheduleIndexJob } from '../queues/index.js';
 import type { PublishJob } from '../types/index.js';
 
 const log = logger.child({ worker: 'publish' });
@@ -15,13 +16,15 @@ async function processPublishJob(job: Job<PublishJob>) {
   try {
     const orchestrator = await createOrchestrator(project_id).initialize();
 
-    // Update page status
     await supabaseAdmin
       .from('pages')
       .update({ status: 'publishing' })
       .eq('id', page_id);
 
     const result = await orchestrator.publishPage(page_id);
+
+    // Per spec: Publisher → Indexing Agent
+    await scheduleIndexJob({ project_id, url: result.link }, { delay: 5000 });
 
     log.info({ jobId: job.id, projectId: project_id, pageId: page_id, wpId: result.id }, 'Publish job completed');
 

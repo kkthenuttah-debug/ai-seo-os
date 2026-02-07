@@ -1,3 +1,4 @@
+import { jsonrepair } from 'jsonrepair';
 import { logger } from '../lib/logger.js';
 import { geminiRouter, type GeminiRouterRequest } from './geminiRouter.js';
 import type { AgentType } from '../types/index.js';
@@ -30,6 +31,8 @@ export interface JsonEnforcerOptions {
   userPrompt: string;
   temperature?: number;
   maxTokens?: number;
+  /** Override API timeout in ms (e.g. for heavy JSON agents). */
+  timeoutMs?: number;
   maxRetries?: number;
 }
 
@@ -53,6 +56,7 @@ export class JsonEnforcer {
           userPrompt: requestOptions.userPrompt,
           temperature: requestOptions.temperature,
           maxTokens: requestOptions.maxTokens,
+          timeoutMs: requestOptions.timeoutMs,
         };
 
         const response = await geminiRouter.callWithRetry(request);
@@ -107,18 +111,151 @@ Start typing the { character immediately.
 
   parseJsonResponse<T>(content: string): T {
     const cleaned = this.cleanJsonResponse(content);
-    
+
+    if (!cleaned || cleaned.length < 2) {
+      throw new Error('Invalid JSON response: Empty or missing response from model');
+    }
+
     try {
       return JSON.parse(cleaned) as T;
     } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const isTruncated = errMsg.includes('Unexpected end of JSON input');
+
+      if (isTruncated) {
+        const repaired = this.tryRepairTruncatedJson(cleaned);
+        if (repaired !== null) {
+          try {
+            return JSON.parse(repaired) as T;
+          } catch {
+            // fall through
+          }
+        }
+      }
+
+      // Try fixing common LLM mistakes: trailing commas before ] or }
+      const withoutTrailingCommas = this.tryFixTrailingCommas(cleaned);
+      if (withoutTrailingCommas !== cleaned) {
+        try {
+          return JSON.parse(withoutTrailingCommas) as T;
+        } catch {
+          // fall through
+        }
+      }
+
+      // Fallback: use jsonrepair to fix missing commas, trailing commas, etc.
+      try {
+        const repaired = jsonrepair(cleaned);
+        return JSON.parse(repaired) as T;
+      } catch {
+        // fall through to final error
+      }
+
       logger.error({
         content: content.substring(0, 500),
         cleaned: cleaned.substring(0, 500),
-        error: error instanceof Error ? error.message : String(error),
+        error: errMsg,
       }, 'Failed to parse JSON response');
-      
-      throw new Error(`Invalid JSON response: ${error instanceof Error ? error.message : 'Unknown error'}`);
+
+      throw new Error(`Invalid JSON response: ${errMsg}`);
     }
+  }
+
+  /**
+   * Remove trailing commas before ] or } (invalid in JSON but often emitted by LLMs).
+   * Only modifies commas outside of string values.
+   */
+  private tryFixTrailingCommas(json: string): string {
+    let result = '';
+    let i = 0;
+    let inString = false;
+    let escape = false;
+    let quote: string | null = null;
+
+    while (i < json.length) {
+      if (escape) {
+        escape = false;
+        result += json[i++];
+        continue;
+      }
+      if (json[i] === '\\' && inString) {
+        escape = true;
+        result += json[i++];
+        continue;
+      }
+      if ((json[i] === '"' || json[i] === "'") && !inString) {
+        inString = true;
+        quote = json[i];
+        result += json[i++];
+        continue;
+      }
+      if (json[i] === quote) {
+        inString = false;
+        quote = null;
+        result += json[i++];
+        continue;
+      }
+      if (inString) {
+        result += json[i++];
+        continue;
+      }
+      if (json[i] === ',') {
+        let j = i + 1;
+        while (j < json.length && /[\s\n\r\t]/.test(json[j])) j++;
+        if (j < json.length && (json[j] === ']' || json[j] === '}')) {
+          i = j;
+          continue;
+        }
+      }
+      result += json[i++];
+    }
+    return result;
+  }
+
+  /**
+   * Attempt to repair truncated JSON by closing unclosed brackets/braces.
+   * Returns null if repair is not possible or would be unsafe.
+   */
+  private tryRepairTruncatedJson(cleaned: string): string | null {
+    let openBraces = 0;
+    let openBrackets = 0;
+    let inString = false;
+    let escape = false;
+    let quote: string | null = null;
+
+    for (let i = 0; i < cleaned.length; i++) {
+      const c = cleaned[i];
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (c === '\\' && inString) {
+        escape = true;
+        continue;
+      }
+      if ((c === '"' || c === "'") && !inString) {
+        inString = true;
+        quote = c;
+        continue;
+      }
+      if (c === quote) {
+        inString = false;
+        quote = null;
+        continue;
+      }
+      if (inString) continue;
+
+      if (c === '{') openBraces++;
+      else if (c === '}') openBraces--;
+      else if (c === '[') openBrackets++;
+      else if (c === ']') openBrackets--;
+    }
+
+    if (openBraces < 0 || openBrackets < 0) return null;
+    if (openBraces === 0 && openBrackets === 0) return null;
+
+    const suffix = ']'.repeat(openBrackets) + '}'.repeat(openBraces);
+    return cleaned + suffix;
   }
 
   private cleanJsonResponse(content: string): string {

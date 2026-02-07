@@ -16,9 +16,10 @@ const redisConfig = parseRedisUrl(env.REDIS_URL);
 export const queueConfig: QueueConfig = {
   ...redisConfig,
   max_concurrency: {
-    agent_tasks: parseInt(process.env.AGENT_TASKS_CONCURRENCY || '3'),
-    build: parseInt(process.env.BUILD_CONCURRENCY || '2'),
-    publish: parseInt(process.env.PUBLISH_CONCURRENCY || '1'),
+    agent_tasks: parseInt(process.env.AGENT_TASKS_CONCURRENCY || '6'),
+    build: parseInt(process.env.BUILD_CONCURRENCY || '6'),
+    publish: parseInt(process.env.PUBLISH_CONCURRENCY || '2'),
+    index: parseInt(process.env.INDEX_CONCURRENCY || '3'),
     monitor: parseInt(process.env.MONITOR_CONCURRENCY || '3'),
     optimize: parseInt(process.env.OPTIMIZE_CONCURRENCY || '2'),
     webhooks: parseInt(process.env.WEBHOOKS_CONCURRENCY || '5'),
@@ -89,6 +90,8 @@ export const getWorkerOptions = (queueName: string) => ({
     ? queueConfig.max_concurrency.build
     : queueName === 'publish'
     ? queueConfig.max_concurrency.publish
+    : queueName === 'index'
+    ? queueConfig.max_concurrency.index
     : queueName === 'monitor'
     ? queueConfig.max_concurrency.monitor
     : queueName === 'optimize'
@@ -100,5 +103,9 @@ export const getWorkerOptions = (queueName: string) => ({
     ? { max: 5, duration: 60000 }
     : queueName === 'webhooks'
     ? { max: 20, duration: 60000 }
+    : queueName === 'agent-tasks'
+    ? { max: 30, duration: 60000 }
+    : queueName === 'build'
+    ? { max: 30, duration: 60000 }
     : { max: 10, duration: 60000 },
 });

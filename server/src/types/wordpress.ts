@@ -13,6 +13,8 @@ export interface CreatePostInput {
   status: 'draft' | 'published';
   meta?: MetaFields;
   elementorData?: unknown;
+  /** WordPress post type: 'page' for main/static (e.g. home), 'post' for articles */
+  postType?: 'page' | 'post';
 }
 
 export interface UpdatePostInput {

@@ -5,7 +5,12 @@ import { supabaseAdmin } from '../lib/supabase.js';
 import { decryptValue } from '../utils/crypto.js';
 import { IntegrationRecoveryService } from './integrationRecovery.js';
 import { createGSCService } from './gsc.js';
-import type { LeadWebhookPayload, PagePublishWebhookPayload, WebhookResult } from '../types/webhooks.js';
+import type {
+  LeadWebhookPayload,
+  PagePublishWebhookPayload,
+  MonitorCompletedWebhookPayload,
+  WebhookResult,
+} from '../types/webhooks.js';
 
 const log = logger.child({ service: 'webhooks' });
 const recovery = new IntegrationRecoveryService({ service: 'webhooks' });
@@ -80,7 +85,7 @@ export class WebhookService {
     };
 
     await recovery.executeWithRetry(async () => {
-      const { error } = await supabaseAdmin.from('leads').insert(lead);
+      const { error } = await supabaseAdmin.from('leads').insert(lead as never);
       if (error) throw error;
     });
 
@@ -90,13 +95,18 @@ export class WebhookService {
   }
 
   async handlePagePublishWebhook(payload: PagePublishWebhookPayload): Promise<WebhookResult> {
-    const updates = {
+    const now = new Date().toISOString();
+    const updates: Record<string, unknown> = {
       publish_status: payload.status === 'published' ? 'published' : 'pending',
       status: payload.status === 'published' ? 'published' : 'draft',
-      published_at: payload.publishedAt ?? new Date().toISOString(),
+      published_at: payload.publishedAt ?? now,
+      updated_at: now,
     };
+    if (payload.wordpressPostId != null) {
+      updates.wordpress_post_id = payload.wordpressPostId;
+    }
 
-    const query = supabaseAdmin.from('pages').update(updates).eq('project_id', payload.projectId);
+    const query = supabaseAdmin.from('pages').update(updates as never).eq('project_id', payload.projectId);
     if (payload.pageId) {
       query.eq('id', payload.pageId);
     } else if (payload.slug) {
@@ -118,12 +128,20 @@ export class WebhookService {
   }
 
   private async triggerIndexingCheck(projectId: string, url: string) {
-    const { data: integration } = await supabaseAdmin
+    const { data } = await supabaseAdmin
       .from('integrations')
       .select('*')
       .eq('project_id', projectId)
       .eq('type', 'gsc')
       .maybeSingle();
+
+    const integration = data as {
+      id: string;
+      access_token_encrypted: string | null;
+      refresh_token_encrypted: string | null;
+      expires_at: string | null;
+      data: { site_url?: string };
+    } | null;
 
     if (!integration?.access_token_encrypted || !integration.refresh_token_encrypted || !integration.data?.site_url) {
       return;
@@ -140,5 +158,52 @@ export class WebhookService {
     );
 
     await service.submitUrlForIndexing(url);
+  }
+
+  /** Trigger outbound webhooks for monitor.completed (POST to registered URLs). */
+  async triggerMonitorCompleted(payload: MonitorCompletedWebhookPayload): Promise<void> {
+    const { data: webhooks } = await supabaseAdmin
+      .from('webhooks')
+      .select('id, url, secret, events')
+      .eq('project_id', payload.projectId)
+      .eq('active', true);
+
+    const list = (webhooks ?? []) as Array<{ id: string; url: string; secret: string; events: string[] }>;
+    const subs = list.filter(w => Array.isArray(w.events) && w.events.includes('monitor.completed'));
+
+    const now = new Date().toISOString();
+    for (const w of subs) {
+      try {
+        const body = JSON.stringify(payload);
+        const signature = crypto
+          .createHmac('sha256', w.secret)
+          .update(body)
+          .digest('hex');
+
+        const res = await fetch(w.url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Webhook-Signature': signature,
+            'X-Webhook-Event': 'monitor.completed',
+          },
+          body,
+        });
+
+        if (res.ok) {
+          await supabaseAdmin
+            .from('webhooks')
+            .update({ last_triggered_at: now, updated_at: now } as never)
+            .eq('id', w.id);
+        }
+
+        log.info(
+          { webhookId: w.id, url: w.url, status: res.status },
+          'Monitor completed webhook triggered'
+        );
+      } catch (err) {
+        log.warn({ webhookId: w.id, url: w.url, error: err }, 'Monitor completed webhook delivery failed');
+      }
+    }
   }
 }

@@ -42,6 +42,7 @@ export interface InternalLinkerInput {
     keywords: string[];
   }>;
   currentPageTitle: string;
+  currentPageSlug?: string;
 }
 
 export interface InternalLinkerOutput {
@@ -87,6 +88,12 @@ export interface PageBuilderInput {
   contentType: string;
   tone: string;
   wordCount: number;
+  /** Optional outline for content structure (e.g. intro, sections, FAQ, conclusion). */
+  outline?: string[];
+  /** Slugs or paths of other pages to link to (e.g. ["/", "/about"]). */
+  internalLinkSlugs?: string[];
+  /** When set, content builder will include a lead-capture form that POSTs to this webhook. */
+  leadCapture?: { webhookUrl: string; projectId: string; pageId: string; sourceUrl: string };
 }
 
 export interface PageBuilderOutput {
@@ -211,6 +218,12 @@ export interface MonitorOutput {
     suggestion: string;
     priority: 'high' | 'medium' | 'low';
   }>;
+  optimization_candidates?: Array<{
+    page_slug: string;
+    priority: 'high' | 'medium' | 'low';
+    reason?: string;
+  }>;
+  health_score?: number;
 }
 
 export interface PublisherInput {
@@ -222,6 +235,13 @@ export interface PublisherInput {
     categories?: string[];
     tags?: string[];
   };
+  /** Optional page context for pre-publish checks (orchestrator passes these) */
+  page_title?: string;
+  page_slug?: string;
+  content_html?: string | null;
+  meta_title?: string | null;
+  meta_description?: string | null;
+  target_keyword?: string;
 }
 
 export interface PublisherOutput {
@@ -231,6 +251,11 @@ export interface PublisherOutput {
   publishedAt: string;
   status: string;
   errors?: string[];
+  /** Pre-publish check: if false, orchestrator will not publish */
+  publish_ready?: boolean;
+  seo_checklist?: Record<string, unknown>;
+  final_meta_title?: string;
+  final_meta_description?: string;
 }
 
 export type AgentInputMap = {

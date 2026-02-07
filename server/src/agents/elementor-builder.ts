@@ -10,20 +10,52 @@ const inputSchema = z.object({
   sections: z.array(z.string()).optional(),
 });
 
-const outputSchema = z.object({
-  elementorData: z.object({
-    version: z.string(),
-    elements: z.array(z.object({
-      id: z.string(),
-      elType: z.string(),
-      settings: z.record(z.unknown()),
-      elements: z.array(z.unknown()).optional(),
-    })),
-  }),
-  widgetsUsed: z.array(z.string()),
-  sectionsCount: z.number(),
-  columnsCount: z.number(),
-});
+function deriveCountsFromElements(elementorData: { elements?: unknown[] }) {
+  const elements = elementorData?.elements ?? [];
+  const widgetsUsed: string[] = [];
+  function collectWidgets(arr: unknown[]): void {
+    for (const item of arr) {
+      if (item && typeof item === 'object') {
+        const o = item as Record<string, unknown>;
+        if (typeof o.widgetType === 'string') widgetsUsed.push(o.widgetType);
+        if (Array.isArray(o.elements)) collectWidgets(o.elements);
+      }
+    }
+  }
+  collectWidgets(elements);
+  const sectionsCount = elements.filter((e: unknown) => (e as { elType?: string })?.elType === 'section').length;
+  let columnsCount = 0;
+  for (const section of elements) {
+    const els = (section as { elements?: unknown[] })?.elements ?? [];
+    columnsCount += els.filter((e: unknown) => (e as { elType?: string })?.elType === 'column').length;
+  }
+  return { widgetsUsed, sectionsCount, columnsCount };
+}
+
+const outputSchema = z
+  .object({
+    elementorData: z.object({
+      version: z.string().optional().default('3.18.0'),
+      elements: z.array(z.object({
+        id: z.string().optional().default(''),
+        elType: z.string().optional().default('section'),
+        settings: z.record(z.unknown()).optional().default({}),
+        elements: z.array(z.unknown()).optional(),
+      })),
+    }),
+    widgetsUsed: z.array(z.string()).optional(),
+    sectionsCount: z.number().optional(),
+    columnsCount: z.number().optional(),
+  })
+  .transform((data) => {
+    const derived = deriveCountsFromElements(data.elementorData);
+    return {
+      elementorData: data.elementorData,
+      widgetsUsed: data.widgetsUsed?.length ? data.widgetsUsed : derived.widgetsUsed,
+      sectionsCount: data.sectionsCount ?? derived.sectionsCount,
+      columnsCount: data.columnsCount ?? derived.columnsCount,
+    };
+  });
 
 const SYSTEM_PROMPT = `You are an expert Elementor page builder specialist with deep knowledge of modern web design and WordPress.
 
@@ -101,8 +133,9 @@ export class ElementorBuilderAgent extends BaseAgent<ElementorBuilderInput, Elem
       systemPrompt: SYSTEM_PROMPT,
       inputSchema,
       outputSchema,
-      maxTokens: 1000,
+      maxTokens: 8192,
       temperature: 0.5,
+      timeout: 180000,
     });
   }
 

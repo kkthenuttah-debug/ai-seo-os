@@ -1,14 +1,16 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { supabaseAdmin } from "../lib/supabase.js";
+import { getAppUserId, supabaseAdmin } from "../lib/supabase.js";
 import { authenticate, verifyProjectOwnership } from "../middleware/auth.js";
-import { startAutomationLoop } from "../services/jobOrchestrator.js";
+import { getPagesByProjectId } from "../lib/supabase.js";
+import { startAutomationLoop, schedulePublishing } from "../services/jobOrchestrator.js";
 import { AuthError, NotFoundError } from "../utils/errors.js";
 
 const createProjectSchema = z.object({
   name: z.string().min(1),
   domain: z.string().min(1),
   description: z.string().optional(),
+  settings: z.record(z.unknown()).optional(),
 });
 
 const updateProjectSchema = z.object({
@@ -33,10 +35,12 @@ export async function projectsRoutes(app: FastifyInstance) {
     const user = request.user;
     if (!user) throw new AuthError();
 
+    const appUserId = await getAppUserId(user);
+
     let query = supabaseAdmin
       .from("projects")
       .select("*", { count: "exact" })
-      .eq("user_id", user.id)
+      .eq("user_id", appUserId)
       .range((page - 1) * limit, page * limit - 1)
       .order("created_at", { ascending: false });
 
@@ -48,8 +52,8 @@ export async function projectsRoutes(app: FastifyInstance) {
     if (error) throw error;
 
     return {
-      projects: data,
-      total: count || 0,
+      projects: data ?? [],
+      total: count ?? 0,
       page,
       limit,
     };
@@ -60,18 +64,21 @@ export async function projectsRoutes(app: FastifyInstance) {
     const user = request.user;
     if (!user) throw new AuthError();
 
+    const appUserId = await getAppUserId(user);
+
+    const defaultSettings = {
+      auto_optimize: true,
+      publish_frequency: "weekly",
+      ...(body.settings && typeof body.settings === "object" ? body.settings : {}),
+    };
     const { data, error } = await supabaseAdmin
       .from("projects")
       .insert({
-        user_id: user.id,
+        user_id: appUserId,
         name: body.name,
-        domain: body.domain,
-        description: body.description,
-        status: "draft",
-        settings: {
-          auto_optimize: true,
-          publish_frequency: "weekly",
-        },
+        domain: body.domain ?? null,
+        status: "active",
+        settings: defaultSettings,
       })
       .select()
       .single();
@@ -140,6 +147,25 @@ export async function projectsRoutes(app: FastifyInstance) {
 
       if (error) throw error;
       return { success: true };
+    },
+  );
+
+  app.post(
+    "/projects/:projectId/publish-ready",
+    { preHandler: [authenticate, verifyProjectOwnership] },
+    async (request) => {
+      const { projectId } = request.params as { projectId: string };
+
+      const pages = await getPagesByProjectId(projectId);
+      const readyPages = pages.filter((p) => p.status === "ready");
+      const pageIds = readyPages.map((p) => p.id);
+
+      if (pageIds.length === 0) {
+        return { success: true, message: "No ready pages to publish", scheduled: 0 };
+      }
+
+      await schedulePublishing(projectId, pageIds);
+      return { success: true, message: `Scheduled publish for ${pageIds.length} page(s)`, scheduled: pageIds.length };
     },
   );
 

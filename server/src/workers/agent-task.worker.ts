@@ -59,9 +59,10 @@ async function processAgentTask(job: Job<AgentTaskJob>): Promise<AgentTaskResult
       throw new Error(`Unknown agent type: ${agent_type}`);
     }
 
-    // Set timeout for agent execution
+    // Set timeout for agent execution (elementor_builder needs longer for large JSON)
+    const timeoutMs = agent_type === 'elementor_builder' ? ELEMENTOR_BUILDER_TIMEOUT : AGENT_TIMEOUT;
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error(`Agent timeout after ${AGENT_TIMEOUT}ms`)), AGENT_TIMEOUT);
+      setTimeout(() => reject(new Error(`Agent timeout after ${timeoutMs}ms`)), timeoutMs);
     });
 
     // Execute agent with timeout
@@ -94,8 +95,8 @@ async function processAgentTask(job: Job<AgentTaskJob>): Promise<AgentTaskResult
       duration,
     }, 'Agent task completed successfully');
 
-    // Enqueue next task based on agent type
-    await enqueueNextTask(agent_type, project_id, input, correlation_id);
+    // Enqueue next task based on agent type (pass output so next agent can be chained)
+    await enqueueNextTask(agent_type, project_id, input, correlation_id, output);
 
     return {
       success: true,
@@ -116,12 +117,12 @@ async function processAgentTask(job: Job<AgentTaskJob>): Promise<AgentTaskResult
       duration,
     }, 'Agent task failed');
 
-    // Store error in database
+    // Store error in database (column is error_message)
     await supabaseAdmin
       .from('agent_runs')
       .update({
         status: 'failed',
-        error: errorMessage,
+        error_message: errorMessage,
         completed_at: new Date().toISOString(),
       })
       .eq('project_id', project_id)
@@ -148,11 +149,11 @@ async function enqueueNextTask(
   agentType: AgentType,
   projectId: string,
   input: Record<string, any>,
-  correlationId: string
+  correlationId: string,
+  output?: Record<string, any>
 ) {
   switch (agentType) {
     case 'market_research':
-      // After market research, schedule site architecture
       await scheduleBuildJob({
         project_id: projectId,
         phase: 'architecture',
@@ -160,15 +161,41 @@ async function enqueueNextTask(
       break;
 
     case 'site_architect':
-      // After site architecture, schedule content building
       await scheduleBuildJob({
         project_id: projectId,
         phase: 'content',
       }, { delay: 10000 });
       break;
 
+    case 'content_builder':
+      // After content builder, run elementor builder so the pipeline continues
+      if (output?.content != null && output?.title != null) {
+        const { scheduleAgentTask } = await import('../queues/index.js');
+        await scheduleAgentTask({
+          project_id: projectId,
+          agent_type: 'elementor_builder',
+          input: {
+            pageTitle: output.title,
+            content: output.content,
+            keywords: [input.target_keyword ?? output.title],
+            contentType: input.content_type ?? 'post',
+          },
+          correlation_id: `${correlationId}-elementor`,
+        }, { delay: 2000 });
+      }
+      break;
+
+    case 'elementor_builder':
+      // After elementor builder, schedule publish if we have a pageId (e.g. from page_builder chain)
+      if (input.pageId) {
+        await schedulePublishJob({
+          project_id: projectId,
+          page_id: input.pageId,
+        }, { delay: 5000 });
+      }
+      break;
+
     case 'page_builder':
-      // After page builder, schedule publishing if page is ready
       if (input.pageId) {
         await schedulePublishJob({
           project_id: projectId,
@@ -178,13 +205,9 @@ async function enqueueNextTask(
       break;
 
     case 'monitor':
-      // Monitor agent might trigger optimization tasks
-      // The output is captured earlier in the function and stored in database
-      // Optimization candidates will be processed by the orchestrator
       break;
 
     default:
-      // No automatic chaining for other agents
       break;
   }
 }

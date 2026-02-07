@@ -1,17 +1,18 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { 
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuSeparator
 } from "@/components/ui/dropdown-menu";
-import { 
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -19,23 +20,33 @@ import {
   DialogDescription,
   DialogFooter
 } from "@/components/ui/dialog";
-import { 
-  Search, 
-  Filter, 
-  Plus, 
-  MoreVertical, 
-  Edit, 
-  Eye, 
-  Trash2, 
+import {
+  Search,
+  Filter,
+  Plus,
+  MoreVertical,
+  Edit,
+  Trash2,
   ExternalLink,
   Download,
-  CheckSquare,
-  Square,
   ArrowUpDown,
-  Calendar,
   FileText,
   Globe
 } from "lucide-react";
+import { pagesService, type PageFromApi } from "@/services/pages";
+import { projectsService } from "@/services/projects";
+import { formatDistanceToNow } from "date-fns";
+import { useNotification } from "@/hooks/useNotification";
+
+/** Normalize project domain to WordPress base URL (e.g. https://example.com) */
+function toWordPressBaseUrl(domain: string | undefined | null): string | null {
+  const raw = (domain ?? "").toString().trim();
+  if (!raw) return null;
+  if (raw.startsWith("http://") || raw.startsWith("https://")) {
+    return raw.replace(/\/+$/, "");
+  }
+  return `https://${raw.replace(/^\/+|\/+$/g, "")}`;
+}
 
 interface Page {
   id: string;
@@ -52,76 +63,23 @@ interface Page {
   keywords: string[];
 }
 
-const mockPages: Page[] = [
-  {
-    id: "1",
-    title: "Ultimate Guide to Urban Gardening for Beginners",
-    slug: "urban-gardening-guide",
-    status: "optimized",
-    published: true,
-    publishedDate: "2024-01-15",
-    wordpressId: 1234,
-    lastModified: "2 hours ago",
-    metaTitle: "Urban Gardening Guide - Grow Your City Garden",
-    metaDescription: "Complete guide to starting an urban garden. Learn container gardening, balcony setups, and small space techniques.",
-    wordCount: 2847,
-    keywords: ["urban gardening", "container gardening", "balcony garden"]
-  },
-  {
-    id: "2",
-    title: "Balcony Composting: Transform Your Small Space",
-    slug: "balcony-composting-guide",
-    status: "published",
-    published: true,
-    publishedDate: "2024-01-12",
-    wordpressId: 1231,
-    lastModified: "1 day ago",
-    metaTitle: "Balcony Composting Made Easy",
-    metaDescription: "Learn how to compost on your balcony with our step-by-step guide. Perfect for apartment dwellers.",
-    wordCount: 1923,
-    keywords: ["balcony composting", "apartment composting", "small space composting"]
-  },
-  {
-    id: "3",
-    title: "Best Vegetables for Container Gardens",
-    slug: "best-vegetables-container-gardens",
-    status: "published",
-    published: true,
-    publishedDate: "2024-01-10",
-    wordpressId: 1228,
-    lastModified: "2 days ago",
-    metaTitle: "Top 15 Vegetables for Container Gardening",
-    metaDescription: "Discover the best vegetables to grow in containers. Tips for successful container vegetable gardening.",
-    wordCount: 2156,
-    keywords: ["container vegetables", "pot gardening", "urban vegetables"]
-  },
-  {
-    id: "4",
-    title: "Vertical Gardening Ideas for Small Spaces",
-    slug: "vertical-gardening-small-spaces",
-    status: "draft",
-    published: false,
-    lastModified: "3 hours ago",
-    metaTitle: "Vertical Gardening Ideas - Maximize Your Space",
-    metaDescription: "Creative vertical gardening solutions for apartments and small spaces. DIY projects and ready-made options.",
-    wordCount: 1654,
-    keywords: ["vertical gardening", "small space garden", "wall garden"]
-  },
-  {
-    id: "5",
-    title: "Indoor Herb Garden Setup Guide",
-    slug: "indoor-herb-garden-setup",
-    status: "optimized",
-    published: true,
-    publishedDate: "2024-01-08",
-    wordpressId: 1225,
-    lastModified: "4 days ago",
-    metaTitle: "Complete Indoor Herb Garden Guide",
-    metaDescription: "How to set up and maintain an indoor herb garden. Best herbs, containers, and care tips.",
-    wordCount: 1789,
-    keywords: ["indoor herbs", "herb garden", "kitchen garden"]
-  }
-];
+function mapPage(p: PageFromApi): Page {
+  const published = !!p.published_at;
+  return {
+    id: p.id,
+    title: p.title,
+    slug: p.slug,
+    status: (p.status as Page["status"]) || "draft",
+    published,
+    publishedDate: p.published_at ? p.published_at.slice(0, 10) : undefined,
+    wordpressId: p.wordpress_post_id ?? undefined,
+    lastModified: formatDistanceToNow(new Date(p.updated_at), { addSuffix: true }),
+    metaTitle: p.meta_title ?? undefined,
+    metaDescription: p.meta_description ?? undefined,
+    wordCount: p.content ? p.content.split(/\s+/).length : 0,
+    keywords: [],
+  };
+}
 
 const statusColors = {
   draft: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300",
@@ -130,7 +88,9 @@ const statusColors = {
 };
 
 export default function Pages() {
-  const [pages, setPages] = useState<Page[]>(mockPages);
+  const { projectId } = useParams<{ projectId: string }>();
+  const [pages, setPages] = useState<Page[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [sortBy, setSortBy] = useState<string>("newest");
@@ -139,6 +99,40 @@ export default function Pages() {
   const [pageToDelete, setPageToDelete] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const pagesPerPage = 20;
+  const [wordpressBaseUrl, setWordpressBaseUrl] = useState<string | null>(null);
+  const { showError } = useNotification();
+
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    projectsService
+      .get(projectId)
+      .then((p) => {
+        if (!cancelled) setWordpressBaseUrl(toWordPressBaseUrl(p.domain));
+      })
+      .catch(() => {
+        if (!cancelled) setWordpressBaseUrl(null);
+      });
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    setLoading(true);
+    pagesService
+      .list(projectId, { limit: 200, sort: "updated_at" })
+      .then((res) => {
+        if (!cancelled) setPages(res.pages.map(mapPage));
+      })
+      .catch((err) => {
+        if (!cancelled) showError(err instanceof Error ? err.message : "Failed to load pages");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [projectId, showError]);
 
   const filteredPages = pages
     .filter(page => {
@@ -192,14 +186,22 @@ export default function Pages() {
     setShowDeleteDialog(true);
   };
 
-  const confirmDelete = () => {
-    if (pageToDelete) {
-      setPages(pages.filter(p => p.id !== pageToDelete));
-      setSelectedPages(prev => {
+  const confirmDelete = async () => {
+    if (!pageToDelete || !projectId) {
+      setShowDeleteDialog(false);
+      setPageToDelete(null);
+      return;
+    }
+    try {
+      await pagesService.delete(projectId, pageToDelete);
+      setPages(pages.filter((p) => p.id !== pageToDelete));
+      setSelectedPages((prev) => {
         const newSet = new Set(prev);
         newSet.delete(pageToDelete);
         return newSet;
       });
+    } catch (err) {
+      showError(err instanceof Error ? err.message : "Failed to delete page");
     }
     setShowDeleteDialog(false);
     setPageToDelete(null);
@@ -357,7 +359,7 @@ export default function Pages() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
-            <span>Pages ({filteredPages.length})</span>
+            <span>Pages ({loading ? "…" : filteredPages.length})</span>
             <div className="flex items-center gap-2">
               <Checkbox
                 checked={selectedPages.size === paginatedPages.length && paginatedPages.length > 0}
@@ -382,7 +384,20 @@ export default function Pages() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedPages.map((page) => (
+                {loading ? (
+                  <tr>
+                    <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                      Loading pages…
+                    </td>
+                  </tr>
+                ) : paginatedPages.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                      No pages yet.
+                    </td>
+                  </tr>
+                ) : (
+                paginatedPages.map((page) => (
                   <tr key={page.id} className="border-b hover:bg-muted/50">
                     <td className="p-4">
                       <Checkbox
@@ -443,17 +458,29 @@ export default function Pages() {
                             <Edit className="h-4 w-4 mr-2" />
                             Edit
                           </DropdownMenuItem>
-                          {page.published && page.wordpressId && (
-                            <DropdownMenuItem asChild>
-                              <a 
-                                href={`https://urbangarden.co/wp-admin/post.php?post=${page.wordpressId}&action=edit`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                <ExternalLink className="h-4 w-4 mr-2" />
-                                View in WordPress
-                              </a>
-                            </DropdownMenuItem>
+                          {page.published && page.wordpressId && wordpressBaseUrl && (
+                            <>
+                              <DropdownMenuItem asChild>
+                                <a
+                                  href={`${wordpressBaseUrl}/${page.slug.replace(/^\/+|\/+$/g, "")}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  <Globe className="h-4 w-4 mr-2" />
+                                  View in WordPress
+                                </a>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem asChild>
+                                <a
+                                  href={`${wordpressBaseUrl}/wp-admin/post.php?post=${page.wordpressId}&action=edit`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  <ExternalLink className="h-4 w-4 mr-2" />
+                                  Edit in WordPress
+                                </a>
+                              </DropdownMenuItem>
+                            </>
                           )}
                           <DropdownMenuItem onClick={() => handleDeletePage(page.id)}>
                             <Trash2 className="h-4 w-4 mr-2" />
@@ -463,7 +490,8 @@ export default function Pages() {
                       </DropdownMenu>
                     </td>
                   </tr>
-                ))}
+                ))
+                )}
               </tbody>
             </table>
           </div>

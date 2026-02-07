@@ -38,10 +38,12 @@ const outputSchema = z.object({
   internal_link_strategy: z.object({
     hub_pages: z.array(z.string()),
     pillar_content: z.array(z.string()),
-    link_clusters: z.array(z.object({
-      hub: z.string(),
-      spokes: z.array(z.string()),
-    })),
+    link_clusters: z.array(
+      z.object({
+        hub: z.string().default(''),
+        spokes: z.array(z.string()).default([]),
+      })
+    ),
   }),
   technical_requirements: z.object({
     schema_types: z.array(z.string()),
@@ -61,6 +63,11 @@ IMPORTANT RULES:
 4. Plan for internal linking from the start
 5. Include schema markup recommendations
 6. Focus on user experience and crawlability
+
+Content types: use exactly one per page.
+- "page" = static/landing page (e.g. About, Services, main hub pages)
+- "post" = blog/article style content (e.g. how-to, news, listicles)
+- "media" = media-heavy or resource page (e.g. gallery, video, download)
 
 Your output MUST be a valid JSON object matching this structure:
 {
@@ -115,7 +122,7 @@ export class SiteArchitectAgent extends BaseAgent<SiteArchitectInput, SiteArchit
       description: 'Designs website structure and internal linking strategy',
       systemPrompt: SYSTEM_PROMPT,
       inputSchema,
-      outputSchema,
+      outputSchema: outputSchema as z.ZodType<SiteArchitectOutput>,
       maxTokens: 8192,
       temperature: 0.6,
     });

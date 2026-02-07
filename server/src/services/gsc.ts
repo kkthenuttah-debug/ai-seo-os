@@ -60,6 +60,13 @@ const SEARCH_TYPES: NonNullable<SearchAnalyticsOptions['searchType']>[] = [
   'news',
 ];
 
+/** Search types that the Search Analytics API accepts without "invalid argument" for our dimensions. */
+const SEARCH_TYPES_FOR_SNAPSHOT: NonNullable<SearchAnalyticsOptions['searchType']>[] = [
+  'web',
+  'image',
+  'video',
+];
+
 export class GoogleSearchConsoleService {
   private oauth2Client: OAuth2Client;
   private searchConsole: searchconsole_v1.Searchconsole;
@@ -388,17 +395,31 @@ export class GoogleSearchConsoleService {
       searchTypes: Record<string, { clicks: number; impressions: number; positionSum: number }>;
     }>();
 
-    for (const searchType of SEARCH_TYPES) {
-      const data = await this.getSearchAnalytics({
-        startDate,
-        endDate,
-        dimensions: ['query', 'page', 'device'],
-        rowLimit: 1000,
-        searchType,
-      });
+    for (const searchType of SEARCH_TYPES_FOR_SNAPSHOT) {
+      const dimensions: ('query' | 'page' | 'device')[] = ['query', 'page', 'device'];
+      let data: SearchAnalyticsData;
+      try {
+        data = await this.getSearchAnalytics({
+          startDate,
+          endDate,
+          dimensions,
+          rowLimit: 1000,
+          searchType,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('invalid argument') || msg.includes('INVALID_ARGUMENT')) {
+          log.warn({ searchType, err }, 'Search Analytics API rejected search type, skipping');
+          continue;
+        }
+        throw err;
+      }
 
       data.rows.forEach(row => {
-        const [query, page, device] = row.keys;
+        const keys = row.keys || [];
+        const query = keys[0];
+        const page = keys[1];
+        const device = dimensions.includes('device') ? keys[2] : undefined;
         const key = `${query ?? ''}::${page ?? ''}`;
         const entry = aggregateMap.get(key) ?? {
           query: query || null,
@@ -550,8 +571,26 @@ export class GoogleSearchConsoleService {
 
       log.info({ url }, 'URL submitted for indexing');
       return true;
-    } catch (error) {
-      log.error({ error, url }, 'Failed to submit URL for indexing');
+    } catch (error: unknown) {
+      const res = error && typeof error === 'object' && 'response' in error
+        ? (error as { response?: { status?: number; data?: { error?: { message?: string; errors?: Array<{ reason?: string }> } } } }).response
+        : undefined;
+      const status = res?.status;
+      const message = res?.data?.error?.message ?? (error instanceof Error ? error.message : String(error));
+      const reason = res?.data?.error?.errors?.[0]?.reason;
+      const isApiNotEnabled =
+        status === 403 &&
+        (reason === 'accessNotConfigured' ||
+          (typeof message === 'string' && (message.includes('has not been used') || message.includes('it is disabled'))));
+
+      if (isApiNotEnabled) {
+        log.warn(
+          { url },
+          'GSC URL indexing skipped: Web Search Indexing API is not enabled for this Google Cloud project. Enable it at https://console.developers.google.com/apis/api/indexing.googleapis.com/overview'
+        );
+      } else {
+        log.error({ url, message }, 'Failed to submit URL for indexing');
+      }
       return false;
     }
   }
@@ -628,7 +667,7 @@ export class GoogleSearchConsoleService {
   }
 }
 
-export function getGSCAuthUrl(): string {
+export function getGSCAuthUrl(projectId: string): string {
   const oauth2Client = new OAuth2Client(
     env.GOOGLE_CLIENT_ID,
     env.GOOGLE_CLIENT_SECRET,
@@ -638,8 +677,9 @@ export function getGSCAuthUrl(): string {
   return oauth2Client.generateAuthUrl({
     access_type: 'offline',
     prompt: 'consent',
+    state: projectId,
     scope: [
-      'https://www.googleapis.com/auth/webmasters.readonly',
+      'https://www.googleapis.com/auth/webmasters', // read + add sites (readonly would block add)
       'https://www.googleapis.com/auth/indexing',
     ],
   });
@@ -680,6 +720,137 @@ export async function refreshGSCAccessToken(refreshToken: string) {
   }
 
   return token;
+}
+
+/** Get the first verified site URL from GSC (for when integration has no site_url set). */
+export async function getFirstVerifiedSiteUrl(credentials: {
+  access_token: string;
+  refresh_token: string;
+  token_expiry: string;
+}): Promise<string | null> {
+  const oauth2Client = new OAuth2Client(
+    env.GOOGLE_CLIENT_ID,
+    env.GOOGLE_CLIENT_SECRET,
+    env.GOOGLE_REDIRECT_URI
+  );
+  oauth2Client.setCredentials({
+    access_token: credentials.access_token,
+    refresh_token: credentials.refresh_token,
+    expiry_date: new Date(credentials.token_expiry).getTime(),
+  });
+  const searchConsole = google.searchconsole({ version: 'v1', auth: oauth2Client });
+  const response = await searchConsole.sites.list();
+  const entry = (response.data.siteEntry || []).find(
+    (site) => site.siteUrl && site.permissionLevel !== 'siteUnverifiedUser'
+  );
+  return entry?.siteUrl ?? null;
+}
+
+/** Normalize a GSC site URL to a domain for matching (e.g. https://www.example.com/ -> example.com). */
+function siteUrlToDomain(siteUrl: string): string {
+  const s = String(siteUrl || '').trim();
+  if (s.startsWith('sc-domain:')) {
+    return s.slice('sc-domain:'.length).toLowerCase();
+  }
+  try {
+    const u = new URL(s.startsWith('http') ? s : `https://${s}`);
+    return u.hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return s.toLowerCase();
+  }
+}
+
+/** Normalize URL for comparison: trailing slash, lowercase host. */
+function normalizeSiteUrlForMatch(url: string): string {
+  const s = String(url || '').trim();
+  if (s.startsWith('sc-domain:')) return s.toLowerCase();
+  try {
+    const u = new URL(s.startsWith('http') ? s : `https://${s}`);
+    const base = `${u.protocol.toLowerCase()}//${u.hostname.toLowerCase()}${u.pathname === '/' ? '' : u.pathname}`;
+    return base.endsWith('/') ? base : `${base}/`;
+  } catch {
+    return s.toLowerCase();
+  }
+}
+
+export interface VerifiedSiteMatchResult {
+  matchedUrl: string | null;
+  verifiedCount: number;
+}
+
+/**
+ * Return a verified GSC property URL that matches the preferred URL (exact or same domain).
+ * Use this so project domain (e.g. example.com) matches a verified property (e.g. https://www.example.com/).
+ */
+export async function getVerifiedSiteUrlMatchingDomain(credentials: {
+  access_token: string;
+  refresh_token: string;
+  token_expiry: string;
+}, preferredSiteUrl: string): Promise<VerifiedSiteMatchResult> {
+  const oauth2Client = new OAuth2Client(
+    env.GOOGLE_CLIENT_ID,
+    env.GOOGLE_CLIENT_SECRET,
+    env.GOOGLE_REDIRECT_URI
+  );
+  oauth2Client.setCredentials({
+    access_token: credentials.access_token,
+    refresh_token: credentials.refresh_token,
+    expiry_date: new Date(credentials.token_expiry).getTime(),
+  });
+  const searchConsole = google.searchconsole({ version: 'v1', auth: oauth2Client });
+  const response = await searchConsole.sites.list();
+  const entries = (response.data.siteEntry || []).filter(
+    (site) => site.siteUrl && site.permissionLevel !== 'siteUnverifiedUser'
+  );
+  const preferredNorm = normalizeSiteUrlForMatch(preferredSiteUrl);
+  const preferredDomain = siteUrlToDomain(preferredSiteUrl);
+  for (const e of entries) {
+    const entryUrl = (e.siteUrl || '').trim();
+    if (!entryUrl) continue;
+    if (normalizeSiteUrlForMatch(entryUrl) === preferredNorm) return { matchedUrl: entryUrl, verifiedCount: entries.length };
+    if (siteUrlToDomain(entryUrl) === preferredDomain) return { matchedUrl: entryUrl, verifiedCount: entries.length };
+  }
+  return { matchedUrl: null, verifiedCount: entries.length };
+}
+
+/**
+ * Add a site to the user's Search Console account via the API.
+ * The site will appear in GSC (possibly unverified) so the user can complete verification there
+ * (e.g. DNS, HTML file, or meta tag). Requires the webmasters scope (not just readonly).
+ * @returns true if added or already present, false on permission/API error
+ */
+export async function addSiteToSearchConsole(credentials: {
+  access_token: string;
+  refresh_token: string;
+  token_expiry: string;
+}, siteUrl: string): Promise<{ added: boolean; error?: string }> {
+  const normalized = siteUrl.trim().endsWith('/') ? siteUrl.trim() : `${siteUrl.trim()}/`;
+  if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
+    return { added: false, error: 'Site URL must start with http:// or https://' };
+  }
+  const oauth2Client = new OAuth2Client(
+    env.GOOGLE_CLIENT_ID,
+    env.GOOGLE_CLIENT_SECRET,
+    env.GOOGLE_REDIRECT_URI
+  );
+  oauth2Client.setCredentials({
+    access_token: credentials.access_token,
+    refresh_token: credentials.refresh_token,
+    expiry_date: new Date(credentials.token_expiry).getTime(),
+  });
+  const searchConsole = google.searchconsole({ version: 'v1', auth: oauth2Client });
+  try {
+    await searchConsole.sites.add({ siteUrl: normalized });
+    log.info({ siteUrl: normalized }, 'Added site to Search Console via API');
+    return { added: true };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes('already exists') || (typeof err === 'object' && err !== null && 'code' in err && (err as { code: number }).code === 409)) {
+      return { added: true };
+    }
+    log.warn({ err, siteUrl: normalized }, 'Could not add site to Search Console (user may need to re-authorize with full scope)');
+    return { added: false, error: message };
+  }
 }
 
 export function createGSCService(credentials: GSCCredentials, integrationId: string) {

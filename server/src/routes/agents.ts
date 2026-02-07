@@ -2,9 +2,10 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { supabaseAdmin } from '../lib/supabase.js';
 import { authenticate, verifyProjectOwnership } from '../middleware/auth.js';
-import { NotFoundError, ValidationError } from '../utils/errors.js';
+import { AppError, NotFoundError, ValidationError } from '../utils/errors.js';
 import { agentTaskQueue } from '../queues/index.js';
 import { logger } from '../lib/logger.js';
+import { retryFailedTasks } from '../services/jobOrchestrator.js';
 
 const log = logger.child({ service: 'agentRoutes' });
 
@@ -54,13 +55,84 @@ export async function agentsRoutes(app: FastifyInstance) {
       }
 
       const { data, count, error } = await query;
-      if (error) throw error;
+      if (error) throw new AppError(error.message ?? 'Failed to load agent runs', 503, 'SERVICE_UNAVAILABLE');
 
       return {
         agentRuns: data,
         total: count || 0,
         limit,
         offset,
+      };
+    }
+  );
+
+  app.post(
+    '/projects/:projectId/agent-runs/retry-failed',
+    { preHandler: [verifyProjectOwnership] },
+    async (request) => {
+      const { projectId } = request.params as { projectId: string };
+      await retryFailedTasks(projectId);
+      return { success: true, message: 'Failed agent runs scheduled for retry' };
+    }
+  );
+
+  const listMonitorRunsSchema = z.object({
+    limit: z.coerce.number().int().positive().max(100).default(20),
+    offset: z.coerce.number().int().min(0).default(0),
+  });
+
+  app.get(
+    '/projects/:projectId/monitor-runs',
+    { preHandler: [verifyProjectOwnership] },
+    async (request) => {
+      const { projectId } = request.params as { projectId: string };
+      const { limit, offset } = listMonitorRunsSchema.parse(request.query);
+
+      const { data, error } = await supabaseAdmin
+        .from('monitor_runs')
+        .select('id, project_id, health_score, result, created_at')
+        .eq('project_id', projectId)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      if (error) throw new AppError(error.message ?? 'Failed to load monitor runs', 503, 'SERVICE_UNAVAILABLE');
+
+      return {
+        monitorRuns: (data ?? []).map((row: { id: string; project_id: string; health_score: number | null; result: unknown; created_at: string }) => ({
+          id: row.id,
+          projectId: row.project_id,
+          healthScore: row.health_score,
+          result: row.result,
+          createdAt: row.created_at,
+        })),
+        limit,
+        offset,
+      };
+    }
+  );
+
+  app.get(
+    '/projects/:projectId/monitor-runs/:runId',
+    { preHandler: [verifyProjectOwnership] },
+    async (request) => {
+      const { projectId, runId } = request.params as { projectId: string; runId: string };
+
+      const { data: run, error } = await supabaseAdmin
+        .from('monitor_runs')
+        .select('*')
+        .eq('id', runId)
+        .eq('project_id', projectId)
+        .single();
+
+      if (error) throw new AppError(error.message ?? 'Failed to load monitor run', 503, 'SERVICE_UNAVAILABLE');
+      if (!run) throw new NotFoundError('Monitor run not found');
+
+      return {
+        id: run.id,
+        projectId: run.project_id,
+        healthScore: run.health_score,
+        result: run.result,
+        createdAt: run.created_at,
       };
     }
   );
@@ -78,7 +150,7 @@ export async function agentsRoutes(app: FastifyInstance) {
         .eq('project_id', projectId)
         .single();
 
-      if (error) throw error;
+      if (error) throw new AppError(error.message ?? 'Failed to load agent run', 503, 'SERVICE_UNAVAILABLE');
       if (!run) throw new NotFoundError('Agent run not found');
 
       return {
@@ -114,7 +186,7 @@ export async function agentsRoutes(app: FastifyInstance) {
         .eq('project_id', projectId)
         .single();
 
-      if (fetchError) throw fetchError;
+      if (fetchError) throw new AppError(fetchError.message ?? 'Failed to load agent run', 503, 'SERVICE_UNAVAILABLE');
       if (!originalRun) throw new NotFoundError('Agent run not found');
 
       if (originalRun.status === 'running') {
@@ -139,7 +211,7 @@ export async function agentsRoutes(app: FastifyInstance) {
         .select()
         .single();
 
-      if (insertError) throw insertError;
+      if (insertError) throw new AppError(insertError.message ?? 'Failed to create retry run', 503, 'SERVICE_UNAVAILABLE');
 
       // Add job to queue
       try {
@@ -176,39 +248,57 @@ export async function agentsRoutes(app: FastifyInstance) {
     async (request) => {
       const { projectId } = request.params as { projectId: string };
 
-      // Get queue counts
-      const jobCounts = await agentTaskQueue.getJobCounts();
-      const isPaused = await agentTaskQueue.isPaused();
-
-      // Get active jobs for this project
-      const activeJobs = await agentTaskQueue.getActive();
-      const projectActiveJobs = activeJobs.filter(
-        job => job.data.projectId === projectId
-      );
-
-      return {
+      const emptyResponse = () => ({
         queueName: 'agent-tasks',
-        isPaused,
-        jobs: {
-          waiting: jobCounts.waiting || 0,
-          active: jobCounts.active || 0,
-          completed: jobCounts.completed || 0,
-          failed: jobCounts.failed || 0,
-          delayed: jobCounts.delayed || 0,
-        },
-        currentJobs: projectActiveJobs.map(job => ({
-          id: job.id,
-          agentType: job.data.agentType,
-          runId: job.data.runId,
-          progress: job.progress,
-          madeProgress: job.madeProgress,
-          processedOn: job.processedOn,
-        })),
-        workerHealth: {
-          isRunning: true,
-          activeCount: projectActiveJobs.length,
-        },
-      };
+        isPaused: false,
+        jobs: { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0 },
+        currentJobs: [] as Array<{ id: string; agentType: string; runId?: string; progress?: number; madeProgress?: boolean; processedOn?: number }>,
+        workerHealth: { isRunning: false, activeCount: 0 },
+      });
+
+      try {
+        const isPaused = await agentTaskQueue.isPaused();
+        const [activeJobs, waitingJobs, delayedJobs, completedRes, failedRes] = await Promise.all([
+          agentTaskQueue.getActive(),
+          agentTaskQueue.getWaiting(),
+          agentTaskQueue.getDelayed(),
+          supabaseAdmin.from('agent_runs').select('id', { count: 'exact', head: true }).eq('project_id', projectId).eq('status', 'completed'),
+          supabaseAdmin.from('agent_runs').select('id', { count: 'exact', head: true }).eq('project_id', projectId).eq('status', 'failed'),
+        ]);
+
+        const completedCount = (completedRes as { count?: number | null })?.count ?? 0;
+        const failedCount = (failedRes as { count?: number | null })?.count ?? 0;
+        const projectActiveJobs = activeJobs.filter((job: { data?: { project_id?: string } }) => job.data?.project_id === projectId);
+        const projectWaitingCount = waitingJobs.filter((job: { data?: { project_id?: string } }) => job.data?.project_id === projectId).length;
+        const projectDelayedCount = delayedJobs.filter((job: { data?: { project_id?: string } }) => job.data?.project_id === projectId).length;
+
+        return {
+          queueName: 'agent-tasks',
+          isPaused,
+          jobs: {
+            waiting: projectWaitingCount,
+            active: projectActiveJobs.length,
+            completed: completedCount,
+            failed: failedCount,
+            delayed: projectDelayedCount,
+          },
+          currentJobs: projectActiveJobs.map((job: { id: string; data?: { agent_type?: string; runId?: string }; progress?: number; madeProgress?: boolean; processedOn?: number }) => ({
+            id: job.id,
+            agentType: job.data?.agent_type ?? 'unknown',
+            runId: job.data?.runId,
+            progress: job.progress,
+            madeProgress: job.madeProgress,
+            processedOn: job.processedOn,
+          })),
+          workerHealth: {
+            isRunning: true,
+            activeCount: projectActiveJobs.length,
+          },
+        };
+      } catch (err) {
+        log.warn({ err, projectId }, 'Queue status unavailable (Redis/queue or DB error)');
+        return emptyResponse();
+      }
     }
   );
 
@@ -226,7 +316,7 @@ export async function agentsRoutes(app: FastifyInstance) {
         .eq('project_id', projectId)
         .single();
 
-      if (fetchError) throw fetchError;
+      if (fetchError) throw new AppError(fetchError.message ?? 'Failed to load agent run', 503, 'SERVICE_UNAVAILABLE');
       if (!run) throw new NotFoundError('Agent run not found');
 
       if (run.status !== 'running' && run.status !== 'pending') {
@@ -258,7 +348,7 @@ export async function agentsRoutes(app: FastifyInstance) {
         .select()
         .single();
 
-      if (updateError) throw updateError;
+      if (updateError) throw new AppError(updateError.message ?? 'Failed to update agent run', 503, 'SERVICE_UNAVAILABLE');
 
       return {
         success: true,
@@ -279,7 +369,7 @@ export async function agentsRoutes(app: FastifyInstance) {
         .select('*')
         .eq('project_id', projectId);
 
-      if (error) throw error;
+      if (error) throw new AppError(error.message ?? 'Failed to load agent stats', 503, 'SERVICE_UNAVAILABLE');
 
       const agentStats = new Map<string, {
         totalRuns: number;

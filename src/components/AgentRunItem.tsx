@@ -133,65 +133,50 @@ export function AgentRunItem({
               )}
             </div>
             
-            {isExpanded && (inputData || outputData) && (
+            {isExpanded && (
               <div className="mt-4 pt-4 border-t space-y-3">
-                {inputData && (
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium">Input Data</span>
-                      <div className="flex gap-1">
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          className="h-6 px-2 text-xs"
-                          onClick={() => handleCopyToClipboard(inputData)}
-                        >
+                <div>
+                  <span className="text-sm font-medium">Input (JSON)</span>
+                  {inputData && typeof inputData === "object" && Object.keys(inputData).length > 0 ? (
+                    <>
+                      <div className="flex gap-1 mt-1 mb-1">
+                        <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => handleCopyToClipboard(inputData)}>
                           <Copy className="h-3 w-3" />
                         </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          className="h-6 px-2 text-xs"
-                          onClick={() => handleDownload(inputData, `${agent}-input.json`)}
-                        >
+                        <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => handleDownload(inputData, `${agent}-input.json`)}>
                           <Download className="h-3 w-3" />
                         </Button>
                       </div>
-                    </div>
-                    <pre className="text-xs bg-muted p-2 rounded overflow-x-auto max-h-32">
-                      {JSON.stringify(inputData, null, 2)}
-                    </pre>
-                  </div>
-                )}
-                
-                {outputData && (
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium">Output Data</span>
-                      <div className="flex gap-1">
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          className="h-6 px-2 text-xs"
-                          onClick={() => handleCopyToClipboard(outputData)}
-                        >
+                      <pre className="text-xs bg-muted p-2 rounded overflow-x-auto max-h-48 overflow-y-auto">
+                        {JSON.stringify(inputData, null, 2)}
+                      </pre>
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground mt-1">No input data</p>
+                  )}
+                </div>
+                <div>
+                  <span className="text-sm font-medium">Output (JSON)</span>
+                  {outputData && typeof outputData === "object" && Object.keys(outputData).length > 0 ? (
+                    <>
+                      <div className="flex gap-1 mt-1 mb-1">
+                        <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => handleCopyToClipboard(outputData)}>
                           <Copy className="h-3 w-3" />
                         </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          className="h-6 px-2 text-xs"
-                          onClick={() => handleDownload(outputData, `${agent}-output.json`)}
-                        >
+                        <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => handleDownload(outputData, `${agent}-output.json`)}>
                           <Download className="h-3 w-3" />
                         </Button>
                       </div>
-                    </div>
-                    <pre className="text-xs bg-muted p-2 rounded overflow-x-auto max-h-32">
-                      {JSON.stringify(outputData, null, 2)}
-                    </pre>
-                  </div>
-                )}
+                      <pre className="text-xs bg-muted p-2 rounded overflow-x-auto max-h-48 overflow-y-auto">
+                        {JSON.stringify(outputData, null, 2)}
+                      </pre>
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {status === "running" ? "Output not yet available (agent still running)." : "No output data for this run."}
+                    </p>
+                  )}
+                </div>
               </div>
             )}
             
@@ -208,6 +193,8 @@ export function AgentRunItem({
               size="sm" 
               className="h-6 w-6 p-0"
               onClick={() => setIsExpanded(!isExpanded)}
+              title={isExpanded ? "Collapse" : "Expand to see input/output JSON"}
+              aria-label={isExpanded ? "Collapse" : "Expand to see input/output JSON"}
             >
               {isExpanded ? (
                 <ChevronDown className="h-3 w-3" />
@@ -216,8 +203,7 @@ export function AgentRunItem({
               )}
             </Button>
             
-            {(inputData || outputData) && (
-              <Dialog open={showDetails} onOpenChange={setShowDetails}>
+            <Dialog open={showDetails} onOpenChange={setShowDetails}>
                 <DialogTrigger asChild>
                   <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
                     <span className="sr-only">View details</span>
@@ -322,7 +308,6 @@ export function AgentRunItem({
                   </div>
                 </DialogContent>
               </Dialog>
-            )}
           </div>
         </div>
       </CardContent>
