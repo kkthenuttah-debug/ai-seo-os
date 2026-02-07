@@ -8,6 +8,8 @@ export interface PageFromApi {
   content?: string;
   meta_title?: string;
   meta_description?: string;
+  meta_keywords?: string;
+  elementor_data?: Record<string, unknown>;
   published_at?: string;
   wordpress_post_id?: number;
   updated_at: string;
@@ -19,6 +21,28 @@ export interface PagesListResponse {
   total: number;
   limit: number;
   offset: number;
+}
+
+export interface CreatePagePayload {
+  title: string;
+  slug: string;
+  content?: string;
+  metaTitle?: string;
+  metaDescription?: string;
+  metaKeywords?: string;
+  elementorData?: Record<string, unknown>;
+  status?: "draft" | "published" | "optimized";
+}
+
+export interface UpdatePagePayload {
+  title?: string;
+  slug?: string;
+  content?: string;
+  metaTitle?: string;
+  metaDescription?: string;
+  metaKeywords?: string;
+  elementorData?: Record<string, unknown>;
+  status?: "draft" | "published" | "optimized";
 }
 
 export const pagesService = {
@@ -34,10 +58,14 @@ export const pagesService = {
   },
   get: (projectId: string, pageId: string) =>
     api.get<PageFromApi>(`/projects/${projectId}/pages/${pageId}`),
-  create: (projectId: string, payload: { title: string; slug: string; content?: string }) =>
+  create: (projectId: string, payload: CreatePagePayload) =>
     api.post<PageFromApi>(`/projects/${projectId}/pages`, payload),
-  update: (projectId: string, pageId: string, payload: Partial<PageFromApi>) =>
+  update: (projectId: string, pageId: string, payload: UpdatePagePayload) =>
     api.patch<PageFromApi>(`/projects/${projectId}/pages/${pageId}`, payload),
   delete: (projectId: string, pageId: string) =>
     api.delete<null>(`/projects/${projectId}/pages/${pageId}`),
+  preview: (projectId: string, pageId: string) =>
+    api.get<{ html: string; page: PageFromApi }>(`/projects/${projectId}/pages/${pageId}/preview`),
+  publish: (projectId: string, pageId: string) =>
+    api.post<{ success: boolean; page: PageFromApi; wordpressUrl: string; wordpressPostId: number }>(`/projects/${projectId}/pages/${pageId}/publish`),
 };
