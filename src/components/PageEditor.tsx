@@ -11,12 +11,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
   SelectContent,
@@ -35,9 +30,13 @@ import {
   Sparkles,
   AlertCircle,
   CheckCircle,
+  Paintbrush,
 } from "lucide-react";
 import { pagesService, type PageFromApi } from "@/services/pages";
 import { useNotification } from "@/hooks/useNotification";
+import { VisualEditor } from "@/components/VisualEditor";
+import type { ElementorData } from "@/types/elementor";
+import { validateElementorData } from "@/lib/elementor-utils";
 
 interface PageEditorProps {
   projectId: string;
@@ -97,7 +96,8 @@ export function PageEditor({
           metaTitle: page.meta_title || "",
           metaDescription: page.meta_description || "",
           metaKeywords: page.meta_keywords || "",
-          status: (page.status as "draft" | "published" | "optimized") || "draft",
+          status:
+            (page.status as "draft" | "published" | "optimized") || "draft",
           elementorData: page.elementor_data
             ? JSON.stringify(page.elementor_data, null, 2)
             : "{}",
@@ -137,7 +137,8 @@ export function PageEditor({
     if (!formData.slug.trim()) {
       newErrors.slug = "Slug is required";
     } else if (!/^[a-z0-9-]+$/.test(formData.slug)) {
-      newErrors.slug = "Slug can only contain lowercase letters, numbers, and hyphens";
+      newErrors.slug =
+        "Slug can only contain lowercase letters, numbers, and hyphens";
     }
 
     // Validate JSON
@@ -179,7 +180,11 @@ export function PageEditor({
         });
         // Update additional fields after creation
         if (savedPage.id) {
-          savedPage = await pagesService.update(projectId, savedPage.id, payload);
+          savedPage = await pagesService.update(
+            projectId,
+            savedPage.id,
+            payload,
+          );
         }
         notifySuccess("Page created successfully");
       }
@@ -229,9 +234,17 @@ export function PageEditor({
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "published":
-        return <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300">Published</Badge>;
+        return (
+          <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300">
+            Published
+          </Badge>
+        );
       case "optimized":
-        return <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">Optimized</Badge>;
+        return (
+          <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">
+            Optimized
+          </Badge>
+        );
       default:
         return <Badge variant="secondary">Draft</Badge>;
     }
@@ -279,11 +292,19 @@ export function PageEditor({
           </div>
         </div>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 overflow-hidden">
-          <TabsList className="grid w-full grid-cols-3">
+        <Tabs
+          value={activeTab}
+          onValueChange={setActiveTab}
+          className="flex-1 overflow-hidden"
+        >
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="content">
               <FileText className="h-4 w-4 mr-1" />
               Content
+            </TabsTrigger>
+            <TabsTrigger value="visual">
+              <Paintbrush className="h-4 w-4 mr-1" />
+              Visual Editor
             </TabsTrigger>
             <TabsTrigger value="seo">
               <Globe className="h-4 w-4 mr-1" />
@@ -296,6 +317,22 @@ export function PageEditor({
           </TabsList>
 
           <div className="mt-4 overflow-y-auto flex-1 max-h-[50vh]">
+            <TabsContent value="visual" className="h-[600px] m-0">
+              <VisualEditor
+                initialData={
+                  formData.elementorData !== "{}"
+                    ? JSON.parse(formData.elementorData)
+                    : undefined
+                }
+                onSave={(data) => {
+                  setFormData((prev) => ({
+                    ...prev,
+                    elementorData: JSON.stringify(data, null, 2),
+                  }));
+                }}
+              />
+            </TabsContent>
+
             <TabsContent value="content" className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="title">
@@ -326,8 +363,12 @@ export function PageEditor({
                     id="slug"
                     value={formData.slug}
                     onChange={(e) => {
-                      setFormData((prev) => ({ ...prev, slug: e.target.value }));
-                      if (errors.slug) setErrors((prev) => ({ ...prev, slug: "" }));
+                      setFormData((prev) => ({
+                        ...prev,
+                        slug: e.target.value,
+                      }));
+                      if (errors.slug)
+                        setErrors((prev) => ({ ...prev, slug: "" }));
                     }}
                     placeholder="page-url-slug"
                     className={errors.slug ? "border-red-500" : ""}
@@ -346,7 +387,12 @@ export function PageEditor({
                 <Textarea
                   id="content"
                   value={formData.content}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, content: e.target.value }))}
+                  onChange={(e) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      content: e.target.value,
+                    }))
+                  }
                   placeholder="Enter page content..."
                   className="min-h-[200px] font-mono text-sm"
                 />
@@ -362,7 +408,12 @@ export function PageEditor({
                 <Input
                   id="metaTitle"
                   value={formData.metaTitle}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, metaTitle: e.target.value }))}
+                  onChange={(e) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      metaTitle: e.target.value,
+                    }))
+                  }
                   placeholder="SEO title (appears in search results)"
                 />
                 <p className="text-xs text-muted-foreground">
@@ -376,7 +427,10 @@ export function PageEditor({
                   id="metaDescription"
                   value={formData.metaDescription}
                   onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, metaDescription: e.target.value }))
+                    setFormData((prev) => ({
+                      ...prev,
+                      metaDescription: e.target.value,
+                    }))
                   }
                   placeholder="Brief description for search engines"
                   className="min-h-[80px]"
@@ -391,7 +445,12 @@ export function PageEditor({
                 <Input
                   id="metaKeywords"
                   value={formData.metaKeywords}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, metaKeywords: e.target.value }))}
+                  onChange={(e) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      metaKeywords: e.target.value,
+                    }))
+                  }
                   placeholder="keyword1, keyword2, keyword3"
                 />
                 <p className="text-xs text-muted-foreground">
@@ -441,8 +500,12 @@ export function PageEditor({
                     id="elementorData"
                     value={formData.elementorData}
                     onChange={(e) => {
-                      setFormData((prev) => ({ ...prev, elementorData: e.target.value }));
-                      if (errors.elementorData) setErrors((prev) => ({ ...prev, elementorData: "" }));
+                      setFormData((prev) => ({
+                        ...prev,
+                        elementorData: e.target.value,
+                      }));
+                      if (errors.elementorData)
+                        setErrors((prev) => ({ ...prev, elementorData: "" }));
                     }}
                     placeholder="{}"
                     className={`min-h-[300px] font-mono text-sm ${errors.elementorData ? "border-red-500" : ""}`}
@@ -454,7 +517,8 @@ export function PageEditor({
                     </p>
                   )}
                   <p className="text-xs text-muted-foreground">
-                    Raw Elementor page builder data in JSON format. Invalid JSON will prevent saving.
+                    Raw Elementor page builder data in JSON format. Invalid JSON
+                    will prevent saving.
                   </p>
                 </div>
               )}

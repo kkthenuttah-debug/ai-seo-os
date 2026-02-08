@@ -89,7 +89,8 @@ export const router = createBrowserRouter([
           {
             path: "projects/:projectId",
             lazy: async () => ({
-              Component: (await import("@/pages/projects/ProjectLayout")).default,
+              Component: (await import("@/pages/projects/ProjectLayout"))
+                .default,
             }),
             children: [
               {
@@ -99,7 +100,8 @@ export const router = createBrowserRouter([
               {
                 path: "overview",
                 lazy: async () => ({
-                  Component: (await import("@/pages/projects/Overview")).default,
+                  Component: (await import("@/pages/projects/Overview"))
+                    .default,
                 }),
               },
               {
@@ -111,13 +113,15 @@ export const router = createBrowserRouter([
               {
                 path: "agents",
                 lazy: async () => ({
-                  Component: (await import("@/pages/projects/AgentsMonitor")).default,
+                  Component: (await import("@/pages/projects/AgentsMonitor"))
+                    .default,
                 }),
               },
               {
                 path: "rankings",
                 lazy: async () => ({
-                  Component: (await import("@/pages/projects/Rankings")).default,
+                  Component: (await import("@/pages/projects/Rankings"))
+                    .default,
                 }),
               },
               {
@@ -129,13 +133,15 @@ export const router = createBrowserRouter([
               {
                 path: "integrations",
                 lazy: async () => ({
-                  Component: (await import("@/pages/projects/Integrations")).default,
+                  Component: (await import("@/pages/projects/Integrations"))
+                    .default,
                 }),
               },
               {
                 path: "settings",
                 lazy: async () => ({
-                  Component: (await import("@/pages/projects/Settings")).default,
+                  Component: (await import("@/pages/projects/Settings"))
+                    .default,
                 }),
               },
             ],
@@ -152,9 +158,14 @@ export const router = createBrowserRouter([
               Component: (await import("@/pages/settings/Account")).default,
             }),
           },
+          {
+            path: "visual-editor-demo",
+            lazy: async () => ({
+              Component: (await import("@/pages/VisualEditorDemo")).default,
+            }),
+          },
         ],
       },
     ],
   },
 ]);
-
