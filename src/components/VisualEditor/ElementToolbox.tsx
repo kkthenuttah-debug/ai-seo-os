@@ -19,6 +19,14 @@ import {
   List,
   PlusSquare,
   AlertCircle,
+  BarChart3,
+  Hash,
+  MessageSquare,
+  ImagePlay,
+  MapPin,
+  ListChecks,
+  Sparkles as SparklesIcon,
+  Share2,
 } from "lucide-react";
 import type { WidgetType } from "@/types/elementor";
 import { DraggableToolboxItem } from "./DraggableToolboxItem";
@@ -132,6 +140,54 @@ const widgets: WidgetDefinition[] = [
     label: "HTML",
     icon: <Code className="h-4 w-4" />,
     description: "Custom HTML code",
+  },
+  {
+    type: "progress-bar",
+    label: "Progress Bar",
+    icon: <BarChart3 className="h-4 w-4" />,
+    description: "Animated progress bar",
+  },
+  {
+    type: "counter",
+    label: "Counter",
+    icon: <Hash className="h-4 w-4" />,
+    description: "Animated number counter",
+  },
+  {
+    type: "testimonials",
+    label: "Testimonials",
+    icon: <MessageSquare className="h-4 w-4" />,
+    description: "Customer testimonials",
+  },
+  {
+    type: "image-carousel",
+    label: "Image Carousel",
+    icon: <ImagePlay className="h-4 w-4" />,
+    description: "Slideshow of images",
+  },
+  {
+    type: "google-maps",
+    label: "Google Maps",
+    icon: <MapPin className="h-4 w-4" />,
+    description: "Embedded map",
+  },
+  {
+    type: "icon-list",
+    label: "Icon List",
+    icon: <ListChecks className="h-4 w-4" />,
+    description: "List with icons",
+  },
+  {
+    type: "lottie",
+    label: "Lottie Animation",
+    icon: <SparklesIcon className="h-4 w-4" />,
+    description: "JSON-based animation",
+  },
+  {
+    type: "social-icons",
+    label: "Social Icons",
+    icon: <Share2 className="h-4 w-4" />,
+    description: "Social media links",
   },
 ];
 

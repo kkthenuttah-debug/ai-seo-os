@@ -16,7 +16,15 @@ export type WidgetType =
   | "tabs"
   | "toggle"
   | "alert"
-  | "html";
+  | "html"
+  | "progress-bar"
+  | "counter"
+  | "testimonials"
+  | "image-carousel"
+  | "google-maps"
+  | "icon-list"
+  | "lottie"
+  | "social-icons";
 
 export interface ElementSettings {
   [key: string]: unknown;
@@ -38,6 +46,26 @@ export interface ElementSettings {
   typography_typography?: string;
   background_background?: string;
   background_color?: string;
+  // Advanced settings
+  _element_id?: string;
+  _css_classes?: string;
+  z_index?: number;
+  border_style?: string;
+  border_width?: { top?: string; right?: string; bottom?: string; left?: string };
+  border_color?: string;
+  border_radius?: { top?: string; right?: string; bottom?: string; left?: string };
+  box_shadow?: string;
+  hide_desktop?: boolean;
+  hide_tablet?: boolean;
+  hide_mobile?: boolean;
+  entrance_animation?: string;
+  // Gradient background
+  background_gradient?: {
+    type?: string;
+    color1?: string;
+    color2?: string;
+    angle?: number;
+  };
 }
 
 export interface ElementorElement {

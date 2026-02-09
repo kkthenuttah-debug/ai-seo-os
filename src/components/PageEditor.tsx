@@ -31,12 +31,15 @@ import {
   AlertCircle,
   CheckCircle,
   Paintbrush,
+  Maximize2,
+  Minimize2,
+  TrendingUp,
 } from "lucide-react";
 import { pagesService, type PageFromApi } from "@/services/pages";
 import { useNotification } from "@/hooks/useNotification";
 import { VisualEditor } from "@/components/VisualEditor";
 import type { ElementorData } from "@/types/elementor";
-import { validateElementorData } from "@/lib/elementor-utils";
+import { validateElementorData, renderElementorToHtml } from "@/lib/elementor-utils";
 
 interface PageEditorProps {
   projectId: string;
@@ -84,6 +87,7 @@ export function PageEditor({
   const [previewHtml, setPreviewHtml] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false);
   const { showError, notifySuccess } = useNotification();
 
   useEffect(() => {
@@ -199,7 +203,14 @@ export function PageEditor({
   };
 
   const handlePreview = () => {
-    const html = `<!DOCTYPE html>
+    let html = '';
+    
+    try {
+      const elementorData = JSON.parse(formData.elementorData);
+      if (elementorData && elementorData.elements && elementorData.elements.length > 0) {
+        html = renderElementorToHtml(elementorData);
+      } else {
+        html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -211,7 +222,6 @@ export function PageEditor({
     h1 { color: #1a1a1a; border-bottom: 2px solid #e5e5e5; padding-bottom: 10px; }
     .content { color: #333; }
     .meta { background: #f5f5f5; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; }
-    .elementor-notice { background: #fff3cd; padding: 10px; border-radius: 4px; margin-top: 20px; font-size: 12px; }
   </style>
 </head>
 <body>
@@ -224,9 +234,17 @@ export function PageEditor({
   <div class="content">
     ${formData.content.replace(/\n/g, "<br>") || "<em>No content yet</em>"}
   </div>
-  ${formData.elementorData !== "{}" ? '<div class="elementor-notice">📦 This page includes Elementor data (not rendered in preview)</div>' : ""}
 </body>
 </html>`;
+      }
+    } catch (err) {
+      html = `<!DOCTYPE html>
+<html><body><div style="padding: 20px; text-align: center;">
+  <h2>Preview Error</h2>
+  <p>Unable to generate preview. Please check the page data.</p>
+</div></body></html>`;
+    }
+    
     setPreviewHtml(html);
     setShowPreview(true);
   };
@@ -255,26 +273,42 @@ export function PageEditor({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className={`overflow-hidden flex flex-col ${isMaximized ? "max-w-none w-screen h-screen m-0 rounded-none" : "max-w-4xl max-h-[90vh]"}`}>
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            {mode === "create" ? (
-              <>
-                <FileText className="h-5 w-5" />
-                Create New Page
-              </>
-            ) : (
-              <>
-                <Sparkles className="h-5 w-5" />
-                Edit Page
-              </>
-            )}
-          </DialogTitle>
-          <DialogDescription>
-            {mode === "create"
-              ? "Create a new page for your project."
-              : `Editing "${page?.title}"`}
-          </DialogDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <DialogTitle className="flex items-center gap-2">
+                {mode === "create" ? (
+                  <>
+                    <FileText className="h-5 w-5" />
+                    Create New Page
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-5 w-5" />
+                    Edit Page
+                  </>
+                )}
+              </DialogTitle>
+              <DialogDescription>
+                {mode === "create"
+                  ? "Create a new page for your project."
+                  : `Editing "${page?.title}"`}
+              </DialogDescription>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsMaximized(!isMaximized)}
+              className="h-8 w-8"
+            >
+              {isMaximized ? (
+                <Minimize2 className="h-4 w-4" />
+              ) : (
+                <Maximize2 className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
         </DialogHeader>
 
         <div className="flex items-center justify-between py-2 border-b">
@@ -297,7 +331,7 @@ export function PageEditor({
           onValueChange={setActiveTab}
           className="flex-1 overflow-hidden"
         >
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="content">
               <FileText className="h-4 w-4 mr-1" />
               Content
@@ -309,6 +343,10 @@ export function PageEditor({
             <TabsTrigger value="seo">
               <Globe className="h-4 w-4 mr-1" />
               SEO & Meta
+            </TabsTrigger>
+            <TabsTrigger value="optimize" disabled={mode === "create" || !page?.id}>
+              <TrendingUp className="h-4 w-4 mr-1" />
+              Optimize
             </TabsTrigger>
             <TabsTrigger value="advanced">
               <Code className="h-4 w-4 mr-1" />
@@ -476,6 +514,80 @@ export function PageEditor({
                   </SelectContent>
                 </Select>
               </div>
+            </TabsContent>
+
+            <TabsContent value="optimize" className="space-y-4">
+              {page?.status === "draft" && (
+                <div className="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-lg p-4 flex items-start gap-3">
+                  <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
+                      Page Not Published
+                    </p>
+                    <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
+                      This page must be published before optimization data is available.
+                    </p>
+                  </div>
+                </div>
+              )}
+              
+              {page?.status !== "draft" && (
+                <>
+                  <div className="space-y-3">
+                    <Label className="text-sm font-semibold">Performance Analytics</Label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="p-4 border rounded-lg bg-muted/20">
+                        <div className="text-2xl font-bold text-blue-600">--</div>
+                        <div className="text-xs text-muted-foreground">Clicks (30d)</div>
+                      </div>
+                      <div className="p-4 border rounded-lg bg-muted/20">
+                        <div className="text-2xl font-bold text-purple-600">--</div>
+                        <div className="text-xs text-muted-foreground">Impressions (30d)</div>
+                      </div>
+                      <div className="p-4 border rounded-lg bg-muted/20">
+                        <div className="text-2xl font-bold text-green-600">--%</div>
+                        <div className="text-xs text-muted-foreground">CTR</div>
+                      </div>
+                      <div className="p-4 border rounded-lg bg-muted/20">
+                        <div className="text-2xl font-bold text-orange-600">--</div>
+                        <div className="text-xs text-muted-foreground">Avg. Position</div>
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      💡 Analytics data will be available once GSC integration is active.
+                    </p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <Label className="text-sm font-semibold">Top Keywords</Label>
+                    <div className="border rounded-lg p-4 text-center text-sm text-muted-foreground">
+                      No keyword data available yet
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <Label className="text-sm font-semibold">AI-Powered Optimization</Label>
+                    <div className="p-4 border rounded-lg space-y-3">
+                      <p className="text-sm text-muted-foreground">
+                        Get AI-powered recommendations to improve this page's SEO performance.
+                      </p>
+                      <Button className="w-full gap-2" variant="outline">
+                        <Sparkles className="h-4 w-4" />
+                        Analyze SEO with AI
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <Label className="text-sm font-semibold">Recommendations</Label>
+                    <div className="border rounded-lg divide-y">
+                      <div className="p-4 text-center text-sm text-muted-foreground">
+                        Run AI analysis to see optimization recommendations
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
             </TabsContent>
 
             <TabsContent value="advanced" className="space-y-4">
