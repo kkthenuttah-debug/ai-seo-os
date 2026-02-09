@@ -12,7 +12,10 @@ export type WidgetType =
   | "icon-box"
   | "image-box"
   | "star-rating"
-  | "text-path"
+  | "accordion"
+  | "tabs"
+  | "toggle"
+  | "alert"
   | "html";
 
 export interface ElementSettings {

@@ -11,6 +11,24 @@ import {
   Upload,
   Trash2,
 } from "lucide-react";
+import {
+  DndContext,
+  DragOverlay,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+  DragStartEvent,
+  DefaultAnnouncements,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 import type {
   ElementorData,
   ElementorElement,
@@ -26,6 +44,7 @@ import {
   deleteElement,
   duplicateElement,
   insertElement,
+  moveElement,
   exportToJSON,
   importFromJSON,
   canAcceptChild,
@@ -33,6 +52,7 @@ import {
 import { ElementToolbox } from "./ElementToolbox";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { RecursiveElementTree } from "./RecursiveElementTree";
+import { ElementRenderer } from "./ElementRenderer";
 import { useNotification } from "@/hooks/useNotification";
 
 interface VisualEditorProps {
@@ -60,7 +80,22 @@ export function VisualEditor({
   ]);
   const [historyIndex, setHistoryIndex] = useState(0);
   const [showCode, setShowCode] = useState(false);
+  const [activeElement, setActiveElement] = useState<ElementorElement | null>(
+    null,
+  );
+
   const { notifySuccess, showError } = useNotification();
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
 
   const addToHistory = useCallback(
     (newElements: ElementorElement[]) => {
@@ -85,6 +120,75 @@ export function VisualEditor({
     },
     [addToHistory],
   );
+
+  const handleDragStart = (event: DragStartEvent) => {
+    const { active } = event;
+    if (active.data.current?.type === "element") {
+      setActiveElement(active.data.current.element);
+    }
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    setActiveElement(null);
+
+    if (!over) return;
+
+    // Case 1: Dragging a toolbox item
+    if (active.data.current?.type === "toolbox-item") {
+      const itemType = active.data.current.itemType;
+      const targetId = over.id as string;
+
+      if (itemType === "section") {
+        const newSection = createSection();
+        newSection.elements = [createColumn(100)];
+        
+        if (targetId === "root") {
+          updateElements([...elements, newSection]);
+        } else {
+          // Find where it was dropped and insert after
+          const newElements = insertElement(elements, newSection, null);
+          updateElements(newElements);
+        }
+        notifySuccess("Section added");
+      } else {
+        // Adding a widget
+        const widgetType = itemType as WidgetType;
+        const targetContainer = over.data.current?.parentId || targetId;
+        
+        const parent = findElementById(elements, targetContainer);
+        if (parent && canAcceptChild(parent.elType, "widget")) {
+          const widget = createWidget(widgetType);
+          const newElements = insertElement(elements, widget, targetContainer);
+          updateElements(newElements);
+          setSelectedElementId(widget.id);
+          notifySuccess(`${widgetType} widget added`);
+        } else {
+          showError("Widgets can only be added to columns");
+        }
+      }
+      return;
+    }
+
+    // Case 2: Moving an existing element
+    if (active.id !== over.id) {
+      const activeId = active.id as string;
+      const overId = over.id as string;
+
+      // Handle reordering sections (root elements)
+      const activeIndex = elements.findIndex((e) => e.id === activeId);
+      const overIndex = elements.findIndex((e) => e.id === overId);
+
+      if (activeIndex !== -1 && overIndex !== -1) {
+        updateElements(arrayMove(elements, activeIndex, overIndex));
+      } else {
+        // Move element to a new container or new position within container
+        const targetContainerId = over.data.current?.parentId || overId;
+        const newElements = moveElement(elements, activeId, targetContainerId, -1);
+        updateElements(newElements);
+      }
+    }
+  };
 
   const handleUndo = () => {
     if (historyIndex > 0) {
@@ -240,110 +344,134 @@ export function VisualEditor({
     : null;
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Toolbar */}
-      <Card className="mb-4">
-        <div className="flex items-center justify-between p-3">
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleUndo}
-              disabled={historyIndex === 0}
-            >
-              <Undo className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleRedo}
-              disabled={historyIndex === history.length - 1}
-            >
-              <Redo className="h-4 w-4" />
-            </Button>
-            <div className="w-px h-6 bg-border mx-1" />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowCode(!showCode)}
-            >
-              <Code className="h-4 w-4 mr-1" />
-              {showCode ? "Visual" : "Code"}
-            </Button>
-            <Button variant="outline" size="sm" onClick={handleExport}>
-              <Download className="h-4 w-4 mr-1" />
-              Export
-            </Button>
-            <Button variant="outline" size="sm" onClick={handleImport}>
-              <Upload className="h-4 w-4 mr-1" />
-              Import
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleClear}
-              disabled={elements.length === 0}
-            >
-              <Trash2 className="h-4 w-4 mr-1" />
-              Clear
-            </Button>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
+      <div className="flex flex-col h-full bg-background">
+        {/* Toolbar */}
+        <Card className="mb-4 border-none shadow-sm bg-muted/50">
+          <div className="flex items-center justify-between p-3">
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleUndo}
+                disabled={historyIndex === 0}
+              >
+                <Undo className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRedo}
+                disabled={historyIndex === history.length - 1}
+              >
+                <Redo className="h-4 w-4" />
+              </Button>
+              <div className="w-px h-6 bg-border mx-1" />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowCode(!showCode)}
+              >
+                <Code className="h-4 w-4 mr-1" />
+                {showCode ? "Visual" : "Code"}
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleExport}>
+                <Download className="h-4 w-4 mr-1" />
+                Export
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleImport}>
+                <Upload className="h-4 w-4 mr-1" />
+                Import
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleClear}
+                disabled={elements.length === 0}
+              >
+                <Trash2 className="h-4 w-4 mr-1" />
+                Clear
+              </Button>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={handlePreview}>
+                <Eye className="h-4 w-4 mr-1" />
+                Preview
+              </Button>
+              <Button size="sm" onClick={handleSave}>
+                <Save className="h-4 w-4 mr-1" />
+                Save
+              </Button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={handlePreview}>
-              <Eye className="h-4 w-4 mr-1" />
-              Preview
-            </Button>
-            <Button size="sm" onClick={handleSave}>
-              <Save className="h-4 w-4 mr-1" />
-              Save
-            </Button>
+        </Card>
+
+        {/* Editor Layout */}
+        <div className="flex gap-4 flex-1 overflow-hidden">
+          {/* Toolbox - Left */}
+          <div className="w-72 flex-shrink-0">
+            <ElementToolbox
+              onAddSection={handleAddSection}
+              onAddWidget={handleAddWidget}
+              selectedElementId={selectedElementId}
+            />
           </div>
-        </div>
-      </Card>
 
-      {/* Editor Layout */}
-      <div className="flex gap-4 flex-1 overflow-hidden">
-        {/* Toolbox - Left */}
-        <div className="w-64 flex-shrink-0">
-          <ElementToolbox
-            onAddSection={handleAddSection}
-            onAddWidget={handleAddWidget}
-            selectedElementId={selectedElementId}
-          />
-        </div>
+          {/* Canvas - Center */}
+          <div className="flex-1 overflow-auto bg-muted/30 rounded-lg border border-dashed">
+            <div className="p-8 min-h-full max-w-5xl mx-auto">
+              <Card className="p-8 shadow-lg min-h-[800px] bg-white dark:bg-zinc-950">
+                {showCode ? (
+                  <div className="font-mono text-sm">
+                    <pre className="bg-muted p-4 rounded overflow-auto">
+                      {exportToJSON({ version: "3.18.0", elements })}
+                    </pre>
+                  </div>
+                ) : (
+                  <RecursiveElementTree
+                    elements={elements}
+                    selectedElementId={selectedElementId}
+                    hoveredElementId={hoveredElementId}
+                    onSelectElement={setSelectedElementId}
+                    onHoverElement={setHoveredElementId}
+                  />
+                )}
+              </Card>
+            </div>
+          </div>
 
-        {/* Canvas - Center */}
-        <div className="flex-1 overflow-auto">
-          <Card className="p-6 min-h-full">
-            {showCode ? (
-              <div className="font-mono text-sm">
-                <pre className="bg-muted p-4 rounded overflow-auto">
-                  {exportToJSON({ version: "3.18.0", elements })}
-                </pre>
-              </div>
-            ) : (
-              <RecursiveElementTree
-                elements={elements}
-                selectedElementId={selectedElementId}
-                hoveredElementId={hoveredElementId}
-                onSelectElement={setSelectedElementId}
-                onHoverElement={setHoveredElementId}
-              />
-            )}
-          </Card>
-        </div>
-
-        {/* Properties Panel - Right */}
-        <div className="w-80 flex-shrink-0">
-          <PropertiesPanel
-            element={selectedElement}
-            elements={elements}
-            onUpdateElement={handleUpdateElement}
-            onDeleteElement={handleDeleteElement}
-            onDuplicateElement={handleDuplicateElement}
-          />
+          {/* Properties Panel - Right */}
+          <div className="w-80 flex-shrink-0">
+            <PropertiesPanel
+              element={selectedElement}
+              elements={elements}
+              onUpdateElement={handleUpdateElement}
+              onDeleteElement={handleDeleteElement}
+              onDuplicateElement={handleDuplicateElement}
+            />
+          </div>
         </div>
       </div>
-    </div>
+
+      <DragOverlay dropAnimation={null}>
+        {activeElement ? (
+          <div className="opacity-80 pointer-events-none scale-95 transition-transform">
+            <ElementRenderer
+              element={activeElement}
+              isSelected={false}
+              isHovered={false}
+              onSelect={() => {}}
+              onHover={() => {}}
+            />
+          </div>
+        ) : null}
+      </DragOverlay>
+    </DndContext>
   );
 }
+
