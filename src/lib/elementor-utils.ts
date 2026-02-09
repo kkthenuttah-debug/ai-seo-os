@@ -99,6 +99,70 @@ function getDefaultWidgetSettings(widgetType: WidgetType): ElementSettings {
         },
         color: "#ddd",
       };
+    case "video":
+      return {
+        video: {
+          url: "https://www.youtube.com/watch?v=XHOmBV4js_E",
+        },
+      };
+    case "icon":
+      return {
+        icon: "star",
+        view: "default",
+        shape: "circle",
+      };
+    case "icon-box":
+      return {
+        icon: "star",
+        title: "This is the Heading",
+        description: "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
+        position: "top",
+      };
+    case "image-box":
+      return {
+        image: {
+          url: "https://via.placeholder.com/800x600",
+        },
+        title: "This is the Heading",
+        description: "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
+        position: "top",
+      };
+    case "star-rating":
+      return {
+        rating: 5,
+        scale: 5,
+        title: "Rating",
+      };
+    case "accordion":
+      return {
+        items: [
+          { title: "Accordion Item #1", content: "Item content 1" },
+          { title: "Accordion Item #2", content: "Item content 2" },
+        ],
+      };
+    case "tabs":
+      return {
+        items: [
+          { title: "Tab #1", content: "Tab content 1" },
+          { title: "Tab #2", content: "Tab content 2" },
+        ],
+      };
+    case "toggle":
+      return {
+        items: [
+          { title: "Toggle Item #1", content: "Toggle content 1" },
+        ],
+      };
+    case "alert":
+      return {
+        type: "info",
+        title: "This is an alert",
+        description: "I am an alert box.",
+      };
+    case "html":
+      return {
+        html: '<div class="custom-html">Enter your HTML here</div>',
+      };
     default:
       return {};
   }

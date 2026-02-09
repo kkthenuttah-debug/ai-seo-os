@@ -13,8 +13,15 @@ import {
   Code,
   Square,
   Columns,
+  HelpCircle,
+  Layout,
+  Layers,
+  List,
+  PlusSquare,
+  AlertCircle,
 } from "lucide-react";
 import type { WidgetType } from "@/types/elementor";
+import { DraggableToolboxItem } from "./DraggableToolboxItem";
 
 interface ElementToolboxProps {
   onAddSection: () => void;
@@ -43,28 +50,10 @@ const widgets: WidgetDefinition[] = [
     description: "Rich text content",
   },
   {
-    type: "button",
-    label: "Button",
-    icon: <MousePointer2 className="h-4 w-4" />,
-    description: "Call-to-action button",
-  },
-  {
     type: "image",
     label: "Image",
     icon: <Image className="h-4 w-4" />,
     description: "Add an image",
-  },
-  {
-    type: "spacer",
-    label: "Spacer",
-    icon: <Space className="h-4 w-4" />,
-    description: "Vertical spacing",
-  },
-  {
-    type: "divider",
-    label: "Divider",
-    icon: <Minus className="h-4 w-4" />,
-    description: "Horizontal line",
   },
   {
     type: "video",
@@ -73,10 +62,70 @@ const widgets: WidgetDefinition[] = [
     description: "Embed video",
   },
   {
+    type: "button",
+    label: "Button",
+    icon: <MousePointer2 className="h-4 w-4" />,
+    description: "Call-to-action button",
+  },
+  {
+    type: "divider",
+    label: "Divider",
+    icon: <Minus className="h-4 w-4" />,
+    description: "Horizontal line",
+  },
+  {
+    type: "spacer",
+    label: "Spacer",
+    icon: <Space className="h-4 w-4" />,
+    description: "Vertical spacing",
+  },
+  {
+    type: "icon",
+    label: "Icon",
+    icon: <HelpCircle className="h-4 w-4" />,
+    description: "Simple icon",
+  },
+  {
+    type: "icon-box",
+    label: "Icon Box",
+    icon: <Layout className="h-4 w-4" />,
+    description: "Icon with text",
+  },
+  {
+    type: "image-box",
+    label: "Image Box",
+    icon: <Layers className="h-4 w-4" />,
+    description: "Image with text",
+  },
+  {
     type: "star-rating",
     label: "Star Rating",
     icon: <Star className="h-4 w-4" />,
     description: "Display ratings",
+  },
+  {
+    type: "accordion",
+    label: "Accordion",
+    icon: <List className="h-4 w-4" />,
+    description: "Collapsible items",
+  },
+  {
+    type: "tabs",
+    label: "Tabs",
+    icon: <Layout className="h-4 w-4" />,
+    description: "Tabbed content",
+  },
+  {
+    type: "toggle",
+    label: "Toggle",
+    icon: <PlusSquare className="h-4 w-4" />,
+    description: "Single collapsible",
+  },
+  {
+    type: "alert",
+    label: "Alert",
+    icon: <AlertCircle className="h-4 w-4" />,
+    description: "Announcement box",
   },
   {
     type: "html",
@@ -97,7 +146,7 @@ export function ElementToolbox({
         <CardTitle className="text-sm font-medium">Elements</CardTitle>
       </CardHeader>
       <CardContent className="p-2">
-        <ScrollArea className="h-[600px]">
+        <ScrollArea className="h-[calc(100vh-200px)]">
           <div className="space-y-4">
             {/* Layout Elements */}
             <div>
@@ -105,19 +154,12 @@ export function ElementToolbox({
                 Layout
               </h3>
               <div className="space-y-1">
-                <Button
-                  variant="ghost"
-                  className="w-full justify-start gap-2 h-auto py-2"
-                  onClick={onAddSection}
-                >
-                  <Square className="h-4 w-4" />
-                  <div className="text-left">
-                    <div className="font-medium text-sm">Section</div>
-                    <div className="text-xs text-muted-foreground">
-                      Container for columns
-                    </div>
-                  </div>
-                </Button>
+                <DraggableToolboxItem
+                  type="section"
+                  label="Section"
+                  icon={<Square className="h-4 w-4" />}
+                  description="Container for columns"
+                />
               </div>
             </div>
 
@@ -128,37 +170,27 @@ export function ElementToolbox({
               </h3>
               <div className="space-y-1">
                 {widgets.map((widget) => (
-                  <Button
+                  <DraggableToolboxItem
                     key={widget.type}
-                    variant="ghost"
-                    className="w-full justify-start gap-2 h-auto py-2"
-                    onClick={() => onAddWidget(widget.type, selectedElementId)}
-                    disabled={!selectedElementId}
-                  >
-                    {widget.icon}
-                    <div className="text-left">
-                      <div className="font-medium text-sm">{widget.label}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {widget.description}
-                      </div>
-                    </div>
-                  </Button>
+                    type={widget.type}
+                    label={widget.label}
+                    icon={widget.icon}
+                    description={widget.description}
+                  />
                 ))}
               </div>
             </div>
 
-            {selectedElementId && (
-              <div className="px-2 py-3 bg-blue-50 dark:bg-blue-950 rounded text-xs">
-                <p className="font-medium mb-1">💡 Tip</p>
-                <p className="text-muted-foreground">
-                  Select a column to add widgets. Sections contain columns, and
-                  columns contain widgets.
-                </p>
-              </div>
-            )}
+            <div className="px-2 py-3 bg-blue-50 dark:bg-blue-950 rounded text-xs">
+              <p className="font-medium mb-1">💡 Tip</p>
+              <p className="text-muted-foreground">
+                Drag and drop elements onto the canvas. Sections can contain columns, and columns contain widgets.
+              </p>
+            </div>
           </div>
         </ScrollArea>
       </CardContent>
     </Card>
   );
 }
+
