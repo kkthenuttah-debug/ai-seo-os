@@ -3,6 +3,15 @@ import { z } from 'zod';
 import { supabaseAdmin } from '../lib/supabase.js';
 import { authenticate, verifyProjectOwnership } from '../middleware/auth.js';
 import { AuthError, NotFoundError, ValidationError } from '../utils/errors.js';
+import { createGSCService } from '../services/gsc.js';
+import { decryptValue } from '../utils/crypto.js';
+
+/** Build canonical page URL from project base URL and page slug. */
+function buildPageUrl(baseUrl: string, slug: string): string {
+  const base = baseUrl.replace(/\/+$/, '');
+  const path = slug.replace(/^\//, '');
+  return path ? `${base}/${path}` : base;
+}
 
 const createPageSchema = z.object({
   title: z.string().min(1),
@@ -87,6 +96,80 @@ export async function pagesRoutes(app: FastifyInstance) {
       if (!page) throw new NotFoundError('Page not found');
 
       return page;
+    }
+  );
+
+  app.post(
+    '/projects/:projectId/pages/:pageId/refresh-index-status',
+    { preHandler: [verifyProjectOwnership] },
+    async (request) => {
+      const { projectId, pageId } = request.params as { projectId: string; pageId: string };
+
+      const { data: page, error: pageError } = await supabaseAdmin
+        .from('pages')
+        .select('id, slug')
+        .eq('id', pageId)
+        .eq('project_id', projectId)
+        .single();
+
+      if (pageError || !page) throw new NotFoundError('Page not found');
+
+      const { data: project, error: projectError } = await supabaseAdmin
+        .from('projects')
+        .select('domain, wordpress_url')
+        .eq('id', projectId)
+        .single();
+
+      if (projectError || !project) throw new NotFoundError('Project not found');
+
+      const baseUrl = (project.wordpress_url ?? project.domain ?? '').toString().trim();
+      if (!baseUrl) throw new ValidationError('Project has no domain or WordPress URL');
+      const normalizedBase = baseUrl.startsWith('http') ? baseUrl.replace(/\/+$/, '') : `https://${baseUrl.replace(/^\/+|\/+$/g, '')}`;
+      const pageUrl = buildPageUrl(normalizedBase, page.slug);
+
+      const { data: gscIntegration, error: gscError } = await supabaseAdmin
+        .from('integrations')
+        .select('id, access_token_encrypted, refresh_token_encrypted, expires_at, data')
+        .eq('project_id', projectId)
+        .eq('type', 'gsc')
+        .single();
+
+      if (gscError || !gscIntegration?.access_token_encrypted || !gscIntegration?.refresh_token_encrypted || !gscIntegration?.data?.site_url) {
+        throw new ValidationError('Google Search Console is not connected for this project');
+      }
+
+      const gsc = createGSCService(
+        {
+          access_token: decryptValue(gscIntegration.access_token_encrypted),
+          refresh_token: decryptValue(gscIntegration.refresh_token_encrypted),
+          token_expiry: (gscIntegration.expires_at ?? new Date().toISOString()) as string,
+          site_url: gscIntegration.data.site_url as string,
+        },
+        gscIntegration.id
+      );
+
+      const inspectionResult = await gsc.getIndexingStatus(pageUrl);
+      const indexStatus = inspectionResult?.indexStatusResult as
+        | { lastCrawlTime?: string; verdict?: string; coverageState?: string }
+        | undefined;
+
+      const lastCrawlTime = indexStatus?.lastCrawlTime ?? null;
+      const statusLabel = indexStatus?.verdict ?? indexStatus?.coverageState ?? null;
+
+      const { data: updated, error: updateError } = await supabaseAdmin
+        .from('pages')
+        .update({
+          gsc_last_crawl_time: lastCrawlTime,
+          gsc_index_status: statusLabel,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', pageId)
+        .eq('project_id', projectId)
+        .select()
+        .single();
+
+      if (updateError) throw updateError;
+      return updated;
     }
   );
 

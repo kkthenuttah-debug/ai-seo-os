@@ -200,6 +200,8 @@ export interface Page {
   publish_status: PublishStatus;
   wordpress_post_id: number | null;
   published_at: string | null;
+  gsc_last_crawl_time: string | null;
+  gsc_index_status: string | null;
   created_at: string;
   updated_at: string;
 }

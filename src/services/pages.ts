@@ -12,6 +12,8 @@ export interface PageFromApi {
   elementor_data?: Record<string, unknown>;
   published_at?: string;
   wordpress_post_id?: number;
+  gsc_last_crawl_time?: string | null;
+  gsc_index_status?: string | null;
   updated_at: string;
   created_at: string;
 }
@@ -68,4 +70,6 @@ export const pagesService = {
     api.get<{ html: string; page: PageFromApi }>(`/projects/${projectId}/pages/${pageId}/preview`),
   publish: (projectId: string, pageId: string) =>
     api.post<{ success: boolean; page: PageFromApi; wordpressUrl: string; wordpressPostId: number }>(`/projects/${projectId}/pages/${pageId}/publish`),
+  refreshIndexStatus: (projectId: string, pageId: string) =>
+    api.post<PageFromApi>(`/projects/${projectId}/pages/${pageId}/refresh-index-status`),
 };

@@ -31,7 +31,8 @@ import {
   Download,
   ArrowUpDown,
   FileText,
-  Globe
+  Globe,
+  RefreshCw
 } from "lucide-react";
 import { pagesService, type PageFromApi } from "@/services/pages";
 import { projectsService } from "@/services/projects";
@@ -58,6 +59,8 @@ interface Page {
   publishedDate?: string;
   wordpressId?: number;
   lastModified: string;
+  lastIndexedAt?: string | null;
+  indexStatus?: string | null;
   metaTitle?: string;
   metaDescription?: string;
   wordCount?: number;
@@ -75,6 +78,8 @@ function mapPage(p: PageFromApi): Page {
     publishedDate: p.published_at ? p.published_at.slice(0, 10) : undefined,
     wordpressId: p.wordpress_post_id ?? undefined,
     lastModified: formatDistanceToNow(new Date(p.updated_at), { addSuffix: true }),
+    lastIndexedAt: p.gsc_last_crawl_time ?? undefined,
+    indexStatus: p.gsc_index_status ?? undefined,
     metaTitle: p.meta_title ?? undefined,
     metaDescription: p.meta_description ?? undefined,
     wordCount: p.content ? p.content.split(/\s+/).length : 0,
@@ -98,6 +103,7 @@ export default function Pages() {
   const [selectedPages, setSelectedPages] = useState<Set<string>>(new Set());
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [pageToDelete, setPageToDelete] = useState<string | null>(null);
+  const [refreshingIndexPageId, setRefreshingIndexPageId] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const pagesPerPage = 20;
   const [wordpressBaseUrl, setWordpressBaseUrl] = useState<string | null>(null);
@@ -274,6 +280,21 @@ export default function Pages() {
     }
   };
 
+  const handleRefreshIndexStatus = async (pageId: string) => {
+    if (!projectId) return;
+    setRefreshingIndexPageId(pageId);
+    try {
+      const updated = await pagesService.refreshIndexStatus(projectId, pageId);
+      setPages((prev) =>
+        prev.map((p) => (p.id === pageId ? mapPage(updated) : p))
+      );
+    } catch (err) {
+      showError(err instanceof Error ? err.message : "Failed to refresh index status");
+    } finally {
+      setRefreshingIndexPageId(null);
+    }
+  };
+
   const getStatusBadge = (status: string) => {
     const classes = statusColors[status as keyof typeof statusColors];
     return (
@@ -429,6 +450,7 @@ export default function Pages() {
                   <th className="text-left p-4 font-medium">Slug</th>
                   <th className="text-left p-4 font-medium">Status</th>
                   <th className="text-left p-4 font-medium">Published</th>
+                  <th className="text-left p-4 font-medium">Last indexed</th>
                   <th className="text-left p-4 font-medium">Last Modified</th>
                   <th className="text-left p-4 font-medium">Actions</th>
                 </tr>
@@ -436,13 +458,13 @@ export default function Pages() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                    <td colSpan={8} className="p-8 text-center text-muted-foreground">
                       Loading pages…
                     </td>
                   </tr>
                 ) : paginatedPages.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                    <td colSpan={8} className="p-8 text-center text-muted-foreground">
                       No pages yet.
                     </td>
                   </tr>
@@ -494,6 +516,18 @@ export default function Pages() {
                       </div>
                     </td>
                     <td className="p-4 text-sm text-muted-foreground">
+                      {page.lastIndexedAt ? (
+                        <span title={page.lastIndexedAt}>
+                          {formatDistanceToNow(new Date(page.lastIndexedAt), { addSuffix: true })}
+                          {page.indexStatus && (
+                            <span className="ml-1 text-muted-foreground">({page.indexStatus})</span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="p-4 text-sm text-muted-foreground">
                       {page.lastModified}
                     </td>
                     <td className="p-4">
@@ -508,6 +542,15 @@ export default function Pages() {
                             <Edit className="h-4 w-4 mr-2" />
                             Edit
                           </DropdownMenuItem>
+                          {page.published && (
+                            <DropdownMenuItem
+                              onClick={() => handleRefreshIndexStatus(page.id)}
+                              disabled={refreshingIndexPageId === page.id}
+                            >
+                              <RefreshCw className={`h-4 w-4 mr-2 ${refreshingIndexPageId === page.id ? "animate-spin" : ""}`} />
+                              {refreshingIndexPageId === page.id ? "Refreshing…" : "Refresh index status"}
+                            </DropdownMenuItem>
+                          )}
                           {page.published && page.wordpressId && wordpressBaseUrl && (
                             <>
                               <DropdownMenuItem asChild>
